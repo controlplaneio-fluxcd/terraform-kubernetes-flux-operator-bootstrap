@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    flux-operator-bootstrap/revision: {{ .Values.revision | quote }}
+data:
+  flux-instance.yaml: |
+{{ .Values.gitopsResources.fluxInstance | indent 4 }}
+{{- range $key, $value := .Values.gitopsResources.prerequisites }}
+  {{ $key }}: |
+{{ $value | indent 4 }}
+{{- end }}
+{{- if .Values.managedResources.runtimeInfo.data }}
+  runtime-info.env: |
+{{- range $key, $value := .Values.managedResources.runtimeInfo.data }}
+    {{ $key }}={{ $value }}
+{{- end }}
+  runtime-info-labels.env: |
+{{- range $key, $value := .Values.managedResources.runtimeInfo.labels }}
+    {{ $key }}={{ $value }}
+{{- end }}
+  runtime-info-annotations.env: |
+{{- range $key, $value := .Values.managedResources.runtimeInfo.annotations }}
+    {{ $key }}={{ $value }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,16 @@
+version: 2
+multi-ecosystem-groups:
+  project:
+    schedule:
+      interval: weekly
+updates:
+  - package-ecosystem: docker
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: project
+  - package-ecosystem: github-actions
+    directories:
+      - .github/workflows
+      - .github/actions/*
+    patterns: ["*"]
+    multi-ecosystem-group: project

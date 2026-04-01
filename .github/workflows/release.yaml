@@ -1,0 +1,117 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/flux-operator-bootstrap
+
+jobs:
+  release:
+    outputs:
+      image_url: ${{ steps.slsa.outputs.image_url }}
+      image_digest: ${{ steps.slsa.outputs.image_digest }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # for checking out the repository contents and publishing the GitHub Release.
+      id-token: write # for generating OIDC tokens used by cosign keyless signing.
+      packages: write # for pushing the container image to GitHub Container Registry.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Prepare
+        id: prep
+        run: |
+          version="${GITHUB_REF#refs/tags/}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: |
+            ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.prep.outputs.version }}
+
+      - name: Publish image
+        id: build-push
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          sbom: true
+          provenance: true
+          push: true
+          builder: ${{ steps.buildx.outputs.name }}
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Set up cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+
+      - name: Sign image
+        run: |
+          cosign sign --yes ${{ env.IMAGE }}@${{ steps.build-push.outputs.digest }}
+
+      - name: Verify signature
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity="https://github.com/${REPOSITORY}/.github/workflows/release.yaml@${GITHUB_REF}" \
+            ${{ env.IMAGE }}@${{ steps.build-push.outputs.digest }}
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.prep.outputs.version }}" \
+            --generate-notes \
+            --latest
+
+      - name: Generate SLSA metadata
+        id: slsa
+        run: |
+          image_url=${{ env.IMAGE }}:${{ steps.prep.outputs.version }}
+          echo "image_url=$image_url" >> "${GITHUB_OUTPUT}"
+          image_digest=${{ steps.build-push.outputs.digest }}
+          echo "image_digest=$image_digest" >> "${GITHUB_OUTPUT}"
+
+  ghcr-provenance:
+    needs: [release]
+    permissions:
+      actions: read   # for detecting the GitHub Actions environment.
+      id-token: write # for generating the OIDC token used by the provenance generator.
+      packages: write # for uploading the provenance attestation to GHCR.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ needs.release.outputs.image_url }}
+      digest: ${{ needs.release.outputs.image_digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,28 @@
+jobImage:
+  repository: ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap
+  tag: ""
+  pullPolicy: IfNotPresent
+
+operatorImage:
+  repository: ""
+  tag: ""
+  pullPolicy: ""
+
+gitopsResources:
+  fluxInstance: ""
+  prerequisites: {}
+
+managedResources:
+  hasSecrets: false
+  secretsHash: ""
+  runtimeInfo:
+    data: {}
+    labels: {}
+    annotations: {}
+
+timeout: "5m"
+
+debugFaultInjectionMessage: ""
+debugFluxOperatorImageTag: ""
+
+revision: 0

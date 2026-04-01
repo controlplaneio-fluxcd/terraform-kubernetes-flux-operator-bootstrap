@@ -1,0 +1,52 @@
+name: prepare-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.1.0 or v0.1.0). Merge the PR and then tag locally.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Normalize version
+        id: version
+        run: |
+          version="${{ inputs.version }}"
+          version="${version#v}"
+          echo "raw=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update versions.tf
+        run: |
+          sed -i 's/module_version = "v[^"]*"/module_version = "${{ steps.version.outputs.tag }}"/' versions.tf
+
+      - name: Update README.md
+        run: |
+          sed -i 's/version\( \+\)= "[0-9][^"]*"/version\1= "${{ steps.version.outputs.raw }}"/' README.md
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
+        with:
+          branch: prepare-release-${{ steps.version.outputs.tag }}
+          commit-message: Prepare release ${{ steps.version.outputs.tag }}
+          title: Prepare release ${{ steps.version.outputs.tag }}
+          delete-branch: true
+          body: |
+            Bumps `module_version` in `versions.tf` and version in `README.md` to `${{ steps.version.outputs.tag }}`.
+
+            **Don't forget to run the e2e for this branch before merging:**
+
+            https://github.com/${{ github.repository }}/actions/workflows/e2e.yaml
