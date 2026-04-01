@@ -1,0 +1,78 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata: {}
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      restartPolicy: Never
+      containers:
+      - name: bootstrap
+        image: "{{ .Values.jobImage.repository }}:{{ .Values.jobImage.tag }}"
+        imagePullPolicy: {{ .Values.jobImage.pullPolicy }}
+        env:
+        - name: FLUX_INSTANCE_FILE
+          value: /bootstrap/flux-instance.yaml
+        - name: PREREQUISITES_DIR
+          value: /bootstrap
+        - name: TIMEOUT
+          value: {{ .Values.timeout | quote }}
+        - name: BOOTSTRAP_NAMESPACE
+          value: {{ .Release.Namespace }}
+        - name: SERVICE_ACCOUNT_NAME
+          value: {{ .Release.Name }}
+        - name: CLUSTER_ROLE_BINDING_NAME
+          value: {{ .Release.Namespace }}
+        - name: CONFIG_MAP_NAME
+          value: {{ .Release.Name }}
+        - name: OPERATOR_IMAGE_REPOSITORY
+          value: {{ .Values.operatorImage.repository | quote }}
+        - name: OPERATOR_IMAGE_TAG
+          value: {{ .Values.operatorImage.tag | quote }}
+        - name: OPERATOR_IMAGE_PULL_POLICY
+          value: {{ .Values.operatorImage.pullPolicy | quote }}
+        - name: DEBUG_FAULT_INJECTION_MESSAGE
+          value: {{ .Values.debugFaultInjectionMessage | quote }}
+        - name: DEBUG_FLUX_OPERATOR_IMAGE_TAG
+          value: {{ .Values.debugFluxOperatorImageTag | quote }}
+{{- if .Values.managedResources.hasSecrets }}
+        - name: SECRETS_FILE
+          value: /bootstrap-secrets/secrets.yaml
+        - name: SECRETS_SECRET_NAME
+          value: {{ .Release.Name }}
+{{- end }}
+{{- if .Values.managedResources.runtimeInfo.data }}
+        - name: RUNTIME_INFO_FILE
+          value: /bootstrap/runtime-info.env
+        - name: RUNTIME_INFO_LABELS_FILE
+          value: /bootstrap/runtime-info-labels.env
+        - name: RUNTIME_INFO_ANNOTATIONS_FILE
+          value: /bootstrap/runtime-info-annotations.env
+        - name: RUNTIME_INFO_CONFIG_MAP_NAME
+          value: flux-runtime-info
+{{- end }}
+        volumeMounts:
+        - name: bootstrap-manifest
+          mountPath: /bootstrap
+          readOnly: true
+{{- if .Values.managedResources.hasSecrets }}
+        - name: bootstrap-secrets
+          mountPath: /bootstrap-secrets
+          readOnly: true
+{{- end }}
+      volumes:
+      - name: bootstrap-manifest
+        configMap:
+          name: {{ .Release.Name }}
+{{- if .Values.managedResources.hasSecrets }}
+      - name: bootstrap-secrets
+        secret:
+          secretName: {{ .Release.Name }}
+{{- end }}
