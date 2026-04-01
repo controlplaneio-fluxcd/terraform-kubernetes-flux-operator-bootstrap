@@ -49,23 +49,31 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
-variable "job_image" {
-  description = "Bootstrap job container image."
+variable "job" {
+  description = "Bootstrap job settings."
   type = object({
-    repository = optional(string, "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap")
-    tag        = optional(string)
-    pullPolicy = optional(string, "IfNotPresent")
+    image = optional(object({
+      repository  = optional(string, "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap")
+      tag         = optional(string)
+      pull_policy = optional(string, "IfNotPresent")
+    }), {})
   })
   default  = {}
   nullable = false
 }
 
-variable "operator_image" {
-  description = "Flux Operator container image. When set, overrides the defaults from the flux-operator Helm chart."
+variable "operator" {
+  description = "Flux Operator settings. 'image' overrides the container image defaults from the flux-operator Helm chart. 'chart' overrides the OCI Helm chart repository and version used to install the operator."
   type = object({
-    repository = optional(string)
-    tag        = optional(string)
-    pullPolicy = optional(string)
+    image = optional(object({
+      repository  = optional(string)
+      tag         = optional(string)
+      pull_policy = optional(string)
+    }), {})
+    chart = optional(object({
+      repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
+      version    = optional(string)
+    }), {})
   })
   default  = {}
   nullable = false

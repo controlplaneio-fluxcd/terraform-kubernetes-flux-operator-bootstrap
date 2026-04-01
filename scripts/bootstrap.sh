@@ -18,6 +18,8 @@ inventory_config_map_name="inventory"
 operator_image_repository="${OPERATOR_IMAGE_REPOSITORY:-}"
 operator_image_tag="${OPERATOR_IMAGE_TAG:-}"
 operator_image_pull_policy="${OPERATOR_IMAGE_PULL_POLICY:-}"
+operator_chart_repository="${OPERATOR_CHART_REPOSITORY:-ghcr.io/controlplaneio-fluxcd/charts/flux-operator}"
+operator_chart_version="${OPERATOR_CHART_VERSION:-}"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 debug_flux_operator_image_tag="${DEBUG_FLUX_OPERATOR_IMAGE_TAG:-}"
 field_manager="flux-operator-bootstrap"
@@ -577,10 +579,15 @@ install_flux_operator() {
     set_args="--set image.tag=${debug_flux_operator_image_tag} --set replicas=2"
     install_timeout="15s"
   fi
-  helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
+  version_args=""
+  if [ -n "${operator_chart_version}" ]; then
+    version_args="--version=${operator_chart_version}"
+  fi
+  helm install flux-operator "oci://${operator_chart_repository}" \
     --namespace="${namespace}" \
     --wait=watcher \
     --timeout="${install_timeout}" \
+    ${version_args} \
     ${set_args}
 }
 

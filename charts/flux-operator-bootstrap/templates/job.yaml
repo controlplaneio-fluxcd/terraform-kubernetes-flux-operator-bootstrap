@@ -15,8 +15,8 @@ spec:
       restartPolicy: Never
       containers:
       - name: bootstrap
-        image: "{{ .Values.jobImage.repository }}:{{ .Values.jobImage.tag }}"
-        imagePullPolicy: {{ .Values.jobImage.pullPolicy }}
+        image: "{{ .Values.job.image.repository }}:{{ .Values.job.image.tag }}"
+        imagePullPolicy: {{ .Values.job.image.pullPolicy }}
         env:
         - name: FLUX_INSTANCE_FILE
           value: /bootstrap/flux-instance.yaml
@@ -33,11 +33,15 @@ spec:
         - name: CONFIG_MAP_NAME
           value: {{ .Release.Name }}
         - name: OPERATOR_IMAGE_REPOSITORY
-          value: {{ .Values.operatorImage.repository | quote }}
+          value: {{ .Values.operator.image.repository | quote }}
         - name: OPERATOR_IMAGE_TAG
-          value: {{ .Values.operatorImage.tag | quote }}
+          value: {{ .Values.operator.image.tag | quote }}
         - name: OPERATOR_IMAGE_PULL_POLICY
-          value: {{ .Values.operatorImage.pullPolicy | quote }}
+          value: {{ .Values.operator.image.pullPolicy | quote }}
+        - name: OPERATOR_CHART_REPOSITORY
+          value: {{ .Values.operator.chart.repository | quote }}
+        - name: OPERATOR_CHART_VERSION
+          value: {{ .Values.operator.chart.version | quote }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}
         - name: DEBUG_FLUX_OPERATOR_IMAGE_TAG

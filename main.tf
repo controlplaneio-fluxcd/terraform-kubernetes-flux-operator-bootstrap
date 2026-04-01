@@ -50,13 +50,23 @@ resource "helm_release" "this" {
   max_history      = 5
 
   values = [yamlencode({
-    jobImage = merge(var.job_image, {
-      tag = coalesce(var.job_image.tag, local.module_version)
-    })
-    operatorImage = {
-      repository = var.operator_image.repository != null ? var.operator_image.repository : ""
-      tag        = var.operator_image.tag != null ? var.operator_image.tag : ""
-      pullPolicy = var.operator_image.pullPolicy != null ? var.operator_image.pullPolicy : ""
+    job = {
+      image = {
+        repository = var.job.image.repository
+        tag        = coalesce(var.job.image.tag, local.module_version)
+        pullPolicy = var.job.image.pull_policy
+      }
+    }
+    operator = {
+      image = {
+        repository = var.operator.image.repository != null ? var.operator.image.repository : ""
+        tag        = var.operator.image.tag != null ? var.operator.image.tag : ""
+        pullPolicy = var.operator.image.pull_policy != null ? var.operator.image.pull_policy : ""
+      }
+      chart = {
+        repository = var.operator.chart.repository
+        version    = var.operator.chart.version != null ? var.operator.chart.version : ""
+      }
     }
     gitopsResources = {
       fluxInstance  = local.flux_instance_yaml
