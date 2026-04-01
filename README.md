@@ -191,23 +191,25 @@ gitops_resources = {
 
 - `revision` (`Required`): revision number for manually triggering a bootstrap re-run; the bootstrap job also runs automatically when any input content changes (secrets, runtime info, gitops resources); bump revision to force a re-run without changing content; when all inputs are unchanged, `terraform plan` shows zero diff
 - `gitops_resources` (`Required`): resources applied with create-if-missing semantics, meant to be reconciled by Flux after bootstrap
-  - `.flux_instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references that are substituted using `runtime_info` values
-  - `.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files
+  - `gitops_resources.flux_instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references that are substituted using `runtime_info` values
+  - `gitops_resources.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files
 - `managed_resources` (`Default: {}`): resources reconciled by the bootstrap job on every run
-  - `.secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the `FluxInstance` namespace
-  - `.runtime_info` (`Optional`): when set, creates a `ConfigMap` named `flux-runtime-info` in the target namespace; its `.data` values are substituted into the `FluxInstance` manifest via `flux envsubst`; tracked in inventory and garbage-collected when removed
-    - `.data` (`Required`): key-value pairs for the ConfigMap data
-    - `.labels` (`Default: {}`): labels to set on the ConfigMap
-    - `.annotations` (`Default: {}`): annotations to set on the ConfigMap
+  - `managed_resources.secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the `FluxInstance` namespace
+  - `managed_resources.runtime_info` (`Optional`): when set, creates a `ConfigMap` named `flux-runtime-info` in the target namespace; its data values are substituted into the `FluxInstance` manifest via `flux envsubst`; tracked in inventory and garbage-collected when removed
+  - `managed_resources.runtime_info.data` (`Required`): key-value pairs for the ConfigMap data
+  - `managed_resources.runtime_info.labels` (`Default: {}`): labels to set on the ConfigMap
+  - `managed_resources.runtime_info.annotations` (`Default: {}`): annotations to set on the ConfigMap
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
-- `job_image` (`Default: {}`): bootstrap job container image
-  - `.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
-  - `.tag` (`Default: module version`): image tag; defaults to the module version
-  - `.pullPolicy` (`Default: "IfNotPresent"`): image pull policy
-- `operator_image` (`Default: {}`): Flux Operator container image; when set, overrides the defaults from the flux-operator Helm chart
-  - `.repository` (`Optional`): image repository
-  - `.tag` (`Optional`): image tag
-  - `.pullPolicy` (`Optional`): image pull policy
+- `job` (`Default: {}`): bootstrap job settings
+  - `job.image.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
+  - `job.image.tag` (`Default: module version`): image tag; defaults to the module version
+  - `job.image.pull_policy` (`Default: "IfNotPresent"`): image pull policy
+- `operator` (`Default: {}`): Flux Operator settings
+  - `operator.image.repository` (`Optional`): container image repository; when set, overrides the default from the flux-operator Helm chart
+  - `operator.image.tag` (`Optional`): container image tag
+  - `operator.image.pull_policy` (`Optional`): container image pull policy
+  - `operator.chart.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
+  - `operator.chart.version` (`Optional`): Helm chart version constraint
 - `timeout` (`Default: "5m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources

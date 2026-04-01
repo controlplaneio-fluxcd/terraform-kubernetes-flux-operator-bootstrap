@@ -296,8 +296,10 @@ module "bootstrap" {
   bootstrap_namespace = "${bootstrap_namespace}"
   revision            = ${revision}
 
-  job_image = {
-    tag = "${image_tag}"
+  job = {
+    image = {
+      tag = "${image_tag}"
+    }
   }
 
   debug_fault_injection_message  = "${fault_injection_message}"
