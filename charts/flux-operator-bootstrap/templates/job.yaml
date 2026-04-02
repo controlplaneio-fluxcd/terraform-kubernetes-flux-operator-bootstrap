@@ -13,6 +13,14 @@ spec:
     spec:
       serviceAccountName: {{ .Release.Name }}
       restartPolicy: Never
+{{- with .Values.job.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.job.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
       containers:
       - name: bootstrap
         image: "{{ .Values.job.image.repository }}:{{ include "flux-operator-bootstrap.job-image-tag" . }}"

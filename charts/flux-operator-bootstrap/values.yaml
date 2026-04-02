@@ -3,6 +3,8 @@ job:
     repository: ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap
     tag: ""
     pullPolicy: IfNotPresent
+  affinity: {}
+  tolerations: []
 
 operator:
   image:
