@@ -20,17 +20,14 @@ RUN apk add --no-cache bash ca-certificates curl tar gzip && \
 COPY scripts/bootstrap.sh /out/usr/local/bin/bootstrap.sh
 RUN chmod +x /out/usr/local/bin/bootstrap.sh
 
-FROM busybox:1.37.0-musl@sha256:19b646668802469d968a05342a601e78da4322a414a7c09b1c9ee25165042138 AS busybox
-
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:a9329520abc449e3b14d5bc3a6ffae065bdde0f02667fa10880c49b35c109fd1
+FROM gcr.io/distroless/static-debian12:debug-nonroot@sha256:afead1275cad5ec9662cdc09ce7fe5961a41467555fc30cd46a60247bf8bbdfd
 
 COPY --from=builder --chown=nonroot:nonroot /out/ /
-COPY --from=busybox --chown=nonroot:nonroot /bin/busybox /busybox/busybox
 
 RUN ["/usr/local/bin/flux", "version", "--client"]
 RUN ["/usr/local/bin/flux-operator", "version", "--client"]
 RUN ["/usr/local/bin/helm", "version", "--short"]
 RUN ["/usr/local/bin/kubectl", "version", "--client"]
-RUN ["/busybox/busybox", "sh", "-n", "/usr/local/bin/bootstrap.sh"]
+RUN ["/busybox/sh", "-n", "/usr/local/bin/bootstrap.sh"]
 
-ENTRYPOINT ["/busybox/busybox", "sh", "/usr/local/bin/bootstrap.sh"]
+ENTRYPOINT ["/busybox/sh", "/usr/local/bin/bootstrap.sh"]
