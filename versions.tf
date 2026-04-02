@@ -1,7 +1,3 @@
-locals {
-  module_version = "v0.0.2"
-}
-
 terraform {
   required_version = ">= 1.11.0"
 

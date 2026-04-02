@@ -54,7 +54,6 @@ variable "job" {
   type = object({
     image = optional(object({
       repository  = optional(string, "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap")
-      tag         = optional(string)
       pull_policy = optional(string, "IfNotPresent")
     }), {})
   })
