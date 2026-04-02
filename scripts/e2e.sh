@@ -158,6 +158,7 @@ render_root_module() {
   secrets_mode="$4"
   flux_operator_image_tag="${5:-}"
   revision="${6:-1}"
+  job_scheduling="${7:-}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -299,6 +300,28 @@ module "bootstrap" {
     image = {
       repository = "${image_repository}"
     }
+$(if [ "${job_scheduling}" = "custom" ]; then
+cat <<'JOBEOF'
+    affinity = {
+      nodeAffinity = {
+        preferredDuringSchedulingIgnoredDuringExecution = [{
+          weight = 1
+          preference = {
+            matchExpressions = [{
+              key      = "node-role.kubernetes.io/control-plane"
+              operator = "Exists"
+            }]
+          }
+        }]
+      }
+    }
+    tolerations = [{
+      key      = "node-role.kubernetes.io/control-plane"
+      operator = "Exists"
+      effect   = "NoSchedule"
+    }]
+JOBEOF
+fi)
   }
 
   debug_fault_injection_message  = "${fault_injection_message}"
@@ -410,6 +433,29 @@ if [ "${remaining_normalized}" != "${expected}" ]; then
   echo "${remaining}" >&2
   exit 1
 fi
+note "Verifying job pod has default node affinity for linux"
+job_affinity="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key}')"
+if [ "${job_affinity}" != "kubernetes.io/os" ]; then
+  echo "Job pod did not have the expected default node affinity" >&2
+  echo "Expected key: kubernetes.io/os, Got: ${job_affinity}" >&2
+  exit 1
+fi
+job_affinity_values="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]}')"
+if [ "${job_affinity_values}" != "linux" ]; then
+  echo "Job pod node affinity did not have the expected values" >&2
+  echo "Expected: linux, Got: ${job_affinity_values}" >&2
+  exit 1
+fi
+note "Verifying job pod has no tolerations by default"
+job_tolerations="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.tolerations}')"
+if [ -n "${job_tolerations}" ]; then
+  echo "Job pod unexpectedly has tolerations set by default" >&2
+  echo "Got: ${job_tolerations}" >&2
+  exit 1
+fi
 note "Verifying bootstrap ClusterRoleBinding was removed"
 if kubectl --context "kind-${cluster_name}" get clusterrolebinding flux-operator-bootstrap >/dev/null 2>&1; then
   echo "Bootstrap ClusterRoleBinding still exists after job completion" >&2
@@ -499,6 +545,35 @@ if [ "$(secret_value bootstrap-managed)" != "rotated" ]; then
   exit 1
 fi
 
+section "Custom Job Scheduling"
+note "Re-rendering with custom affinity and tolerations"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 4 "custom"
+terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
+assert_flux_runtime_ready
+note "Verifying job pod has custom affinity"
+custom_affinity_key="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].key}')"
+if [ "${custom_affinity_key}" != "node-role.kubernetes.io/control-plane" ]; then
+  echo "Job pod did not have the expected custom affinity" >&2
+  echo "Expected key: node-role.kubernetes.io/control-plane, Got: ${custom_affinity_key}" >&2
+  exit 1
+fi
+note "Verifying job pod has custom tolerations"
+custom_toleration_key="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.tolerations[0].key}')"
+if [ "${custom_toleration_key}" != "node-role.kubernetes.io/control-plane" ]; then
+  echo "Job pod did not have the expected custom toleration" >&2
+  echo "Expected key: node-role.kubernetes.io/control-plane, Got: ${custom_toleration_key}" >&2
+  exit 1
+fi
+custom_toleration_effect="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.tolerations[0].effect}')"
+if [ "${custom_toleration_effect}" != "NoSchedule" ]; then
+  echo "Job pod did not have the expected custom toleration effect" >&2
+  echo "Expected: NoSchedule, Got: ${custom_toleration_effect}" >&2
+  exit 1
+fi
+
 section "Destroy Behavior"
 note "Verifying Flux resources exist before destroy"
 kubectl_get_flux_operator_resources
@@ -585,4 +660,4 @@ note "Destroying unlock scenario (includes kind cluster)"
 terraform -chdir="${unlock_tf_dir}" destroy -no-color -auto-approve
 
 section "Assertions"
-note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, clean destroy, failure recovery, and Helm release unlock"
+note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, job scheduling (affinity/tolerations), clean destroy, failure recovery, and Helm release unlock"

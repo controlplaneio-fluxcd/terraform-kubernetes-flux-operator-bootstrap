@@ -203,6 +203,8 @@ gitops_resources = {
 - `job` (`Default: {}`): bootstrap job settings
   - `job.image.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
   - `job.image.pull_policy` (`Default: "IfNotPresent"`): image pull policy
+  - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
+  - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
 - `operator` (`Default: {}`): Flux Operator settings
   - `operator.image.repository` (`Optional`): container image repository; when set, overrides the default from the flux-operator Helm chart
   - `operator.image.tag` (`Optional`): container image tag

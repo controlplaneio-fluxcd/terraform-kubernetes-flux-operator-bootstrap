@@ -55,6 +55,8 @@ resource "helm_release" "this" {
         repository = var.job.image.repository
         pullPolicy = var.job.image.pull_policy
       }
+      affinity    = var.job.affinity
+      tolerations = var.job.tolerations
     }
     operator = {
       image = {

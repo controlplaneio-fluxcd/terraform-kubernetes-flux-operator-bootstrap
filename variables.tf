@@ -56,6 +56,20 @@ variable "job" {
       repository  = optional(string, "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap")
       pull_policy = optional(string, "IfNotPresent")
     }), {})
+    affinity = optional(any, {
+      nodeAffinity = {
+        requiredDuringSchedulingIgnoredDuringExecution = {
+          nodeSelectorTerms = [{
+            matchExpressions = [{
+              key      = "kubernetes.io/os"
+              operator = "In"
+              values   = ["linux"]
+            }]
+          }]
+        }
+      }
+    })
+    tolerations = optional(list(any), [])
   })
   default  = {}
   nullable = false
