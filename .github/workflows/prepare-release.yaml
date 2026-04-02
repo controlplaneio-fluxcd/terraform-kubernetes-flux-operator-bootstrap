@@ -29,9 +29,9 @@ jobs:
           echo "raw=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Update versions.tf
+      - name: Update Chart.yaml
         run: |
-          sed -i 's/module_version = "v[^"]*"/module_version = "${{ steps.version.outputs.tag }}"/' versions.tf
+          sed -i 's/^version: .*/version: ${{ steps.version.outputs.raw }}/' charts/flux-operator-bootstrap/Chart.yaml
 
       - name: Update README.md
         run: |
@@ -45,7 +45,7 @@ jobs:
           title: Prepare release ${{ steps.version.outputs.tag }}
           delete-branch: true
           body: |
-            Bumps `module_version` in `versions.tf` and version in `README.md` to `${{ steps.version.outputs.tag }}`.
+            Bumps `version` in `Chart.yaml` and in `README.md` to `${{ steps.version.outputs.tag }}`.
 
             **Don't forget to run the e2e for this branch before merging:**
 

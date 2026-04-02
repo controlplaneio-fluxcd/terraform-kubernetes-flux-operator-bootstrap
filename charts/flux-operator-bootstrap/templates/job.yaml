@@ -15,7 +15,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: bootstrap
-        image: "{{ .Values.job.image.repository }}:{{ .Values.job.image.tag }}"
+        image: "{{ .Values.job.image.repository }}:{{ include "flux-operator-bootstrap.job-image-tag" . }}"
         imagePullPolicy: {{ .Values.job.image.pullPolicy }}
         env:
         - name: FLUX_INSTANCE_FILE

@@ -202,7 +202,6 @@ gitops_resources = {
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
 - `job` (`Default: {}`): bootstrap job settings
   - `job.image.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
-  - `job.image.tag` (`Default: module version`): image tag; defaults to the module version
   - `job.image.pull_policy` (`Default: "IfNotPresent"`): image pull policy
 - `operator` (`Default: {}`): Flux Operator settings
   - `operator.image.repository` (`Optional`): container image repository; when set, overrides the default from the flux-operator Helm chart

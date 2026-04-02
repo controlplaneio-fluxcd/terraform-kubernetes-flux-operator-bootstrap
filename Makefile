@@ -1,4 +1,4 @@
-IMAGE_REPOSITORY ?= terraform-kubernetes-flux-operator-bootstrap
+IMAGE_REPOSITORY ?= terraform-kubernetes-flux-operator-bootstrap-test
 IMAGE_TAG ?= dev
 IMAGE ?= $(IMAGE_REPOSITORY):$(IMAGE_TAG)
 

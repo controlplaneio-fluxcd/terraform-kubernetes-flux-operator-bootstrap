@@ -53,7 +53,6 @@ resource "helm_release" "this" {
     job = {
       image = {
         repository = var.job.image.repository
-        tag        = coalesce(var.job.image.tag, local.module_version)
         pullPolicy = var.job.image.pull_policy
       }
     }

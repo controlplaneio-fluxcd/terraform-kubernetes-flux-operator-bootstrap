@@ -5,10 +5,9 @@ export NO_COLOR=1
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cluster_name="flux-operator-bootstrap-e2e"
-image_repository="terraform-kubernetes-flux-operator-bootstrap"
+image_repository="terraform-kubernetes-flux-operator-bootstrap-test"
 image_tag="dev"
 image="${image_repository}:${image_tag}"
-module_image="ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap:${image_tag}"
 inventory_config_map_name="inventory"
 success_tf_dir="$(mktemp -d)"
 failure_tf_dir="$(mktemp -d)"
@@ -281,7 +280,7 @@ provider "kubernetes" {
 resource "terraform_data" "kind_load_image" {
   depends_on = [module.kind_cluster]
 
-  input = "${module_image}"
+  input = "${image}"
 
   provisioner "local-exec" {
     command = "kind load docker-image \${self.input} --name ${cluster_name}"
@@ -298,7 +297,7 @@ module "bootstrap" {
 
   job = {
     image = {
-      tag = "${image_tag}"
+      repository = "${image_repository}"
     }
   }
 
@@ -336,8 +335,6 @@ EOF
 section "Cluster Setup"
 note "Resetting kind cluster ${cluster_name}"
 kind delete cluster --name "${cluster_name}" 2>/dev/null || true
-note "Tagging local image ${image} as ${module_image} for module consumption"
-docker tag "${image}" "${module_image}"
 
 section "Happy Path"
 note "Rendering success scenario Terraform root"
