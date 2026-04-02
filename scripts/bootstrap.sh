@@ -1,5 +1,6 @@
-#!/busybox/busybox sh
+#!/busybox/sh
 set -eu
+export PATH="/busybox:$PATH"
 
 flux_instance_file="${FLUX_INSTANCE_FILE:?FLUX_INSTANCE_FILE is required}"
 prerequisites_dir="${PREREQUISITES_DIR:-/bootstrap}"
@@ -34,7 +35,7 @@ fail() {
 
 extract_metadata_value() {
   key="$1"
-  /busybox/busybox awk -v wanted="${key}" '
+  awk -v wanted="${key}" '
     $1 == "metadata:" { in_metadata = 1; next }
     in_metadata && $0 ~ /^[^[:space:]]/ { exit }
     in_metadata {
@@ -52,7 +53,7 @@ extract_top_level_value() {
   manifest_file="$1"
   key="$2"
 
-  /busybox/busybox awk -v wanted="${key}" '
+  awk -v wanted="${key}" '
     $1 == wanted ":" {
       sub(/^[^:]+:[[:space:]]*/, "", $0)
       print $0
@@ -65,7 +66,7 @@ extract_manifest_metadata_value() {
   manifest_file="$1"
   key="$2"
 
-  /busybox/busybox awk -v wanted="${key}" '
+  awk -v wanted="${key}" '
     $1 == "metadata:" { in_metadata = 1; next }
     in_metadata && $0 ~ /^[^[:space:]]/ { exit }
     in_metadata {
@@ -84,9 +85,9 @@ split_yaml_documents() {
   output_dir="$2"
   prefix="$3"
 
-  /busybox/busybox mkdir -p "${output_dir}"
+  mkdir -p "${output_dir}"
 
-  /busybox/busybox awk -v output_dir="${output_dir}" -v prefix="${prefix}" '
+  awk -v output_dir="${output_dir}" -v prefix="${prefix}" '
     function flush() {
       if (has_content) {
         file = sprintf("%s/%s-%03d.yaml", output_dir, prefix, count++)
@@ -120,7 +121,7 @@ split_yaml_documents() {
 count_yaml_documents() {
   manifest_file="$1"
 
-  /busybox/busybox awk '
+  awk '
     function flush() {
       if (has_content) {
         count++
@@ -170,9 +171,9 @@ manifest_details() {
 
 format_manifest_details() {
   manifest_info="$1"
-  manifest_kind="$(printf '%s' "${manifest_info}" | /busybox/busybox cut -d'|' -f1)"
-  manifest_name="$(printf '%s' "${manifest_info}" | /busybox/busybox cut -d'|' -f2)"
-  manifest_namespace="$(printf '%s' "${manifest_info}" | /busybox/busybox cut -d'|' -f3)"
+  manifest_kind="$(printf '%s' "${manifest_info}" | cut -d'|' -f1)"
+  manifest_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f2)"
+  manifest_namespace="$(printf '%s' "${manifest_info}" | cut -d'|' -f3)"
 
   if [ -n "${manifest_namespace}" ]; then
     printf '%s %s/%s' "${manifest_kind}" "${manifest_namespace}" "${manifest_name}"
@@ -205,7 +206,7 @@ apply_prerequisites() {
     fi
 
     found_prerequisite="true"
-    split_dir="${scratch_dir}/$(/busybox/busybox basename "${prerequisite_file}" .yaml)"
+    split_dir="${scratch_dir}/$(basename "${prerequisite_file}" .yaml)"
     split_yaml_documents "${prerequisite_file}" "${split_dir}" "doc"
 
     for manifest_file in "${split_dir}"/doc-*.yaml; do
@@ -223,8 +224,8 @@ apply_prerequisites() {
 }
 
 wait_for_flux_instance_crd() {
-  end_time=$(( $(/busybox/busybox date +%s) + 300 ))
-  while [ "$(/busybox/busybox date +%s)" -lt "${end_time}" ]; do
+  end_time=$(( $(date +%s) + 300 ))
+  while [ "$(date +%s)" -lt "${end_time}" ]; do
     if kubectl get crd fluxinstances.fluxcd.controlplane.io >/dev/null 2>&1; then
       log "CRD found; waiting for Established"
       kubectl wait --for=condition=Established crd/fluxinstances.fluxcd.controlplane.io --timeout="${timeout}" >/dev/null
@@ -367,7 +368,7 @@ load_inventory_entries() {
     return 0
   fi
 
-  printf '%s\n' "${entries}" | /busybox/busybox grep '^- ' | /busybox/busybox sed 's/^- //' > "${output_file}"
+  printf '%s\n' "${entries}" | grep '^- ' | sed 's/^- //' > "${output_file}"
 }
 
 update_inventory() {
@@ -407,13 +408,13 @@ garbage_collect_removed_entries() {
       continue
     fi
 
-    if /busybox/busybox grep -Fx "${previous_entry}" "${current_entries_file}" >/dev/null 2>&1; then
+    if grep -Fx "${previous_entry}" "${current_entries_file}" >/dev/null 2>&1; then
       continue
     fi
 
-    entry_kind="$(printf '%s' "${previous_entry}" | /busybox/busybox cut -d'/' -f1)"
-    entry_namespace="$(printf '%s' "${previous_entry}" | /busybox/busybox cut -d'/' -f2)"
-    entry_name="$(printf '%s' "${previous_entry}" | /busybox/busybox cut -d'/' -f3)"
+    entry_kind="$(printf '%s' "${previous_entry}" | cut -d'/' -f1)"
+    entry_namespace="$(printf '%s' "${previous_entry}" | cut -d'/' -f2)"
+    entry_name="$(printf '%s' "${previous_entry}" | cut -d'/' -f3)"
 
     log "- delete ${entry_kind} ${entry_namespace}/${entry_name}"
     kubectl delete "${entry_kind}" "${entry_name}" -n "${entry_namespace}" --ignore-not-found=true >/dev/null
@@ -495,7 +496,7 @@ reconcile_managed_resources() {
     log "No runtime info"
   fi
 
-  /busybox/busybox sort -u -o "${current_entries_file}" "${current_entries_file}"
+  sort -u -o "${current_entries_file}" "${current_entries_file}"
   garbage_collect_removed_entries "${previous_entries_file}" "${current_entries_file}"
   update_inventory "${current_entries_file}"
 }
@@ -503,7 +504,7 @@ reconcile_managed_resources() {
 cleanup() {
   log "Cleanup bootstrap transport resources"
   if [ -n "${scratch_dir:-}" ] && [ -d "${scratch_dir}" ]; then
-    /busybox/busybox rm -rf "${scratch_dir}"
+    rm -rf "${scratch_dir}"
   fi
   if ! kubectl delete configmap "${config_map_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
     log "Failed to delete ConfigMap ${bootstrap_namespace}/${config_map_name}"
@@ -533,7 +534,7 @@ log "Target: ${namespace}/${instance_name}"
 log "Bootstrap namespace: ${bootstrap_namespace}"
 
 trap cleanup EXIT
-scratch_dir="$(/busybox/busybox mktemp -d)"
+scratch_dir="$(mktemp -d)"
 
 log "Prerequisites"
 apply_prerequisites "${scratch_dir}"
@@ -554,13 +555,13 @@ if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
   while IFS="=" read -r key value; do
     export_args="${export_args} ${key}=${value}"
   done < "${runtime_info_file}"
-  /busybox/busybox sh -c "export${export_args}; flux envsubst --strict" \
+  sh -c "export${export_args}; flux envsubst --strict" \
     < "${flux_instance_file}" > "${scratch_dir}/flux-instance.yaml"
   flux_instance_file="${scratch_dir}/flux-instance.yaml"
 fi
 
 helm_release_status() {
-  helm status "$1" -n "$2" 2>/dev/null | /busybox/busybox awk '/^STATUS:/{print $2; exit}'
+  helm status "$1" -n "$2" 2>/dev/null | awk '/^STATUS:/{print $2; exit}'
 }
 
 install_flux_operator() {
@@ -614,10 +615,10 @@ unlock_helm_release() {
       fi
       # Decode the release payload, patch the status, and re-encode.
       release_payload="$(kubectl get secret "${latest_secret}" -n "${release_namespace}" \
-        -o go-template='{{index .data "release"}}' | /busybox/busybox base64 -d | /busybox/busybox gzip -d)"
+        -o go-template='{{index .data "release"}}' | base64 -d | gzip -d)"
       patched_payload="$(printf '%s' "${release_payload}" \
-        | /busybox/busybox sed "s/\"status\":\"${release_status}\"/\"status\":\"failed\"/")"
-      encoded_payload="$(printf '%s' "${patched_payload}" | /busybox/busybox gzip | /busybox/busybox base64 -w 0)"
+        | sed "s/\"status\":\"${release_status}\"/\"status\":\"failed\"/")"
+      encoded_payload="$(printf '%s' "${patched_payload}" | gzip | base64 -w 0)"
       kubectl patch secret "${latest_secret}" -n "${release_namespace}" \
         --type='merge' -p "{\"data\":{\"release\":\"${encoded_payload}\"}}" >/dev/null
       log "Helm release ${release_name} unlocked"
