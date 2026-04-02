@@ -1,5 +1,5 @@
 apiVersion: v2
 name: flux-operator-bootstrap
-version: 0.1.0
+version: 0.0.3
 description: Bootstrap chart for Flux Operator
 type: application
