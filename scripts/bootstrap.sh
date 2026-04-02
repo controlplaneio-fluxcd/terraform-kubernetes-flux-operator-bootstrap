@@ -10,7 +10,6 @@ bootstrap_namespace="${BOOTSTRAP_NAMESPACE:?BOOTSTRAP_NAMESPACE is required}"
 service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
 cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
 config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
-secrets_secret_name="${SECRETS_SECRET_NAME:-}"
 runtime_info_file="${RUNTIME_INFO_FILE:-}"
 runtime_info_labels_file="${RUNTIME_INFO_LABELS_FILE:-}"
 runtime_info_annotations_file="${RUNTIME_INFO_ANNOTATIONS_FILE:-}"
@@ -34,50 +33,15 @@ fail() {
 }
 
 extract_metadata_value() {
-  key="$1"
-  awk -v wanted="${key}" '
-    $1 == "metadata:" { in_metadata = 1; next }
-    in_metadata && $0 ~ /^[^[:space:]]/ { exit }
-    in_metadata {
-      gsub(/^[[:space:]]+/, "", $0)
-      if ($1 == wanted ":") {
-        sub(/^[^:]+:[[:space:]]*/, "", $0)
-        print $0
-        exit
-      }
-    }
-  ' "${flux_instance_file}"
+  yq ".metadata.$1 // \"\"" "${flux_instance_file}"
 }
 
 extract_top_level_value() {
-  manifest_file="$1"
-  key="$2"
-
-  awk -v wanted="${key}" '
-    $1 == wanted ":" {
-      sub(/^[^:]+:[[:space:]]*/, "", $0)
-      print $0
-      exit
-    }
-  ' "${manifest_file}"
+  yq ".$2 // \"\"" "$1"
 }
 
 extract_manifest_metadata_value() {
-  manifest_file="$1"
-  key="$2"
-
-  awk -v wanted="${key}" '
-    $1 == "metadata:" { in_metadata = 1; next }
-    in_metadata && $0 ~ /^[^[:space:]]/ { exit }
-    in_metadata {
-      gsub(/^[[:space:]]+/, "", $0)
-      if ($1 == wanted ":") {
-        sub(/^[^:]+:[[:space:]]*/, "", $0)
-        print $0
-        exit
-      }
-    }
-  ' "${manifest_file}"
+  yq ".metadata.$2 // \"\"" "$1"
 }
 
 split_yaml_documents() {
@@ -87,66 +51,17 @@ split_yaml_documents() {
 
   mkdir -p "${output_dir}"
 
-  awk -v output_dir="${output_dir}" -v prefix="${prefix}" '
-    function flush() {
-      if (has_content) {
-        file = sprintf("%s/%s-%03d.yaml", output_dir, prefix, count++)
-        print document > file
-        close(file)
-      }
-      document = ""
-      has_content = 0
-    }
-
-    /^---[[:space:]]*$/ {
-      flush()
-      next
-    }
-
-    {
-      document = document $0 ORS
-      trimmed = $0
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", trimmed)
-      if (trimmed != "" && trimmed !~ /^#/) {
-        has_content = 1
-      }
-    }
-
-    END {
-      flush()
-    }
-  ' "${input_file}"
+  total=$(yq ea '[.] | length' "${input_file}")
+  i=0
+  while [ "$i" -lt "$total" ]; do
+    out=$(printf '%s/%s-%03d.yaml' "${output_dir}" "${prefix}" "$i")
+    yq ea "select(documentIndex == $i)" "${input_file}" > "${out}"
+    i=$((i + 1))
+  done
 }
 
 count_yaml_documents() {
-  manifest_file="$1"
-
-  awk '
-    function flush() {
-      if (has_content) {
-        count++
-      }
-      has_content = 0
-    }
-
-    /^---[[:space:]]*$/ {
-      flush()
-      next
-    }
-
-    {
-      trimmed = $0
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", trimmed)
-      if (trimmed != "" && trimmed !~ /^#/) {
-        has_content = 1
-      }
-    }
-
-    END {
-      flush()
-      print count + 0
-    }
-  ' "${manifest_file}"
+  yq ea '[.] | length' "$1"
 }
 
 validate_flux_instance_file() {
