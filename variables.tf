@@ -76,17 +76,11 @@ variable "job" {
 }
 
 variable "operator" {
-  description = "Flux Operator settings. 'image' overrides the container image defaults from the flux-operator Helm chart. 'chart' overrides the OCI Helm chart repository and version used to install the operator."
+  description = "Flux Operator settings. 'repository' and 'version' control the OCI Helm chart used to install the operator. 'values' is an optional object of Helm chart values passed to the operator install."
   type = object({
-    image = optional(object({
-      repository  = optional(string)
-      tag         = optional(string)
-      pull_policy = optional(string)
-    }), {})
-    chart = optional(object({
-      repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
-      version    = optional(string)
-    }), {})
+    repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
+    version    = optional(string)
+    values     = optional(any, {})
   })
   default  = {}
   nullable = false

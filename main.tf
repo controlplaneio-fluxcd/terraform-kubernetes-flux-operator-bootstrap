@@ -59,15 +59,9 @@ resource "helm_release" "this" {
       tolerations = var.job.tolerations
     }
     operator = {
-      image = {
-        repository = var.operator.image.repository != null ? var.operator.image.repository : ""
-        tag        = var.operator.image.tag != null ? var.operator.image.tag : ""
-        pullPolicy = var.operator.image.pull_policy != null ? var.operator.image.pull_policy : ""
-      }
-      chart = {
-        repository = var.operator.chart.repository
-        version    = var.operator.chart.version != null ? var.operator.chart.version : ""
-      }
+      repository = var.operator.repository
+      version    = var.operator.version != null ? var.operator.version : ""
+      values     = length(var.operator.values) > 0 ? yamlencode(var.operator.values) : ""
     }
     gitopsResources = {
       fluxInstance  = local.flux_instance_yaml

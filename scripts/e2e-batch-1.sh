@@ -235,6 +235,36 @@ if [ "${custom_toleration_effect}" != "NoSchedule" ]; then
   exit 1
 fi
 
+section "Operator Chart Values"
+note "Uninstalling flux-operator to test fresh install with custom values"
+helm --kube-context "kind-${cluster_name}" delete flux-operator -n flux-system --no-hooks || true
+note "Re-rendering with custom operator chart values"
+operator_values='{
+    tolerations = [{
+      key      = "node-role.kubernetes.io/control-plane"
+      operator = "Exists"
+      effect   = "NoSchedule"
+    }]
+  }'
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 5 "" "5m" "${operator_values}"
+terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
+assert_flux_runtime_ready
+note "Verifying flux-operator deployment has custom tolerations from operator.values"
+op_toleration_key="$(kubectl --context "kind-${cluster_name}" -n flux-system get deployment flux-operator \
+  -o jsonpath='{.spec.template.spec.tolerations[0].key}')"
+if [ "${op_toleration_key}" != "node-role.kubernetes.io/control-plane" ]; then
+  echo "flux-operator deployment did not have the expected toleration from operator.values" >&2
+  echo "Expected key: node-role.kubernetes.io/control-plane, Got: ${op_toleration_key}" >&2
+  exit 1
+fi
+op_toleration_effect="$(kubectl --context "kind-${cluster_name}" -n flux-system get deployment flux-operator \
+  -o jsonpath='{.spec.template.spec.tolerations[0].effect}')"
+if [ "${op_toleration_effect}" != "NoSchedule" ]; then
+  echo "flux-operator deployment did not have the expected toleration effect from operator.values" >&2
+  echo "Expected: NoSchedule, Got: ${op_toleration_effect}" >&2
+  exit 1
+fi
+
 section "Destroy Behavior"
 note "Verifying Flux resources exist before destroy"
 kubectl_get_flux_operator_resources
@@ -244,5 +274,5 @@ note "Destroying happy-path bootstrap root (includes kind cluster)"
 terraform -chdir="${success_tf_dir}" destroy -no-color -auto-approve
 
 section "Assertions"
-note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, job scheduling (affinity/tolerations), and clean destroy"
+note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, job scheduling (affinity/tolerations), operator chart values, and clean destroy"
 print_elapsed_total
