@@ -2,6 +2,8 @@ IMAGE_REPOSITORY ?= terraform-kubernetes-flux-operator-bootstrap-test
 IMAGE_TAG ?= dev
 IMAGE ?= $(IMAGE_REPOSITORY):$(IMAGE_TAG)
 
+SHELL := /bin/bash -o pipefail
+
 .PHONY: docker-build
 docker-build:
 	docker build -t $(IMAGE) .

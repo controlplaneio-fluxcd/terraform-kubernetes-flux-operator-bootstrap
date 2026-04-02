@@ -7,13 +7,9 @@ job:
   tolerations: []
 
 operator:
-  image:
-    repository: ""
-    tag: ""
-    pullPolicy: ""
-  chart:
-    repository: ghcr.io/controlplaneio-fluxcd/charts/flux-operator
-    version: ""
+  repository: ghcr.io/controlplaneio-fluxcd/charts/flux-operator
+  version: ""
+  values: ""
 
 gitopsResources:
   fluxInstance: ""

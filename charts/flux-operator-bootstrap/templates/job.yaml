@@ -40,16 +40,14 @@ spec:
           value: {{ .Release.Namespace }}
         - name: CONFIG_MAP_NAME
           value: {{ .Release.Name }}
-        - name: OPERATOR_IMAGE_REPOSITORY
-          value: {{ .Values.operator.image.repository | quote }}
-        - name: OPERATOR_IMAGE_TAG
-          value: {{ .Values.operator.image.tag | quote }}
-        - name: OPERATOR_IMAGE_PULL_POLICY
-          value: {{ .Values.operator.image.pullPolicy | quote }}
         - name: OPERATOR_CHART_REPOSITORY
-          value: {{ .Values.operator.chart.repository | quote }}
+          value: {{ .Values.operator.repository | quote }}
         - name: OPERATOR_CHART_VERSION
-          value: {{ .Values.operator.chart.version | quote }}
+          value: {{ .Values.operator.version | quote }}
+{{- if .Values.operator.values }}
+        - name: OPERATOR_VALUES_FILE
+          value: /bootstrap/operator-values.yaml
+{{- end }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}
         - name: DEBUG_FLUX_OPERATOR_IMAGE_TAG

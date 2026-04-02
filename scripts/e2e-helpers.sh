@@ -166,6 +166,7 @@ render_root_module() {
   revision="${6:-1}"
   job_scheduling="${7:-}"
   timeout="${8:-5m}"
+  operator_values="${9:-}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -330,6 +331,14 @@ cat <<'JOBEOF'
 JOBEOF
 fi)
   }
+
+$(if [ -n "${operator_values}" ]; then
+cat <<OPEOF
+  operator = {
+    values = ${operator_values}
+  }
+OPEOF
+fi)
 
   timeout = "${timeout}"
 

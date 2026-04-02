@@ -12,6 +12,10 @@ data:
   {{ $key }}: |
 {{ $value | indent 4 }}
 {{- end }}
+{{- if .Values.operator.values }}
+  operator-values.yaml: |
+{{ .Values.operator.values | indent 4 }}
+{{- end }}
 {{- if .Values.managedResources.runtimeInfo.data }}
   runtime-info.env: |
 {{- range $key, $value := .Values.managedResources.runtimeInfo.data }}

@@ -49,10 +49,10 @@ are reconciled on every bootstrap run. `managed_resources.secrets_yaml` is
 reconciled into the target namespace with server-side apply.
 `managed_resources.runtime_info` is applied as a `ConfigMap` named
 `flux-runtime-info` in the target namespace and its data values are substituted
-into the `FluxInstance` manifest before the initial apply. This enables
-Flux's `Kustomization.spec.postBuild` variable substitution for the
-`FluxInstance` itself by referencing the same `ConfigMap` via
-`spec.postBuild.substituteFrom`.
+into the `FluxInstance` manifest before the initial apply. For steady-state
+variable substitution, use `.spec.kustomize.patches` in the `FluxInstance` to
+patch the generated Flux `Kustomization` (from `.spec.sync`) with
+`spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
 
 Callers must configure the HashiCorp Helm and Kubernetes providers for the
 module.
@@ -136,8 +136,9 @@ When `managed_resources.runtime_info` is set, the bootstrap job:
 
 This allows the `FluxInstance` manifest to use variable references like
 `${cluster_name}` that are resolved at bootstrap time. For steady-state
-reconciliation, configure the Flux sync `Kustomization` to reference the same
-`ConfigMap` via `spec.postBuild.substituteFrom`.
+reconciliation, use `.spec.kustomize.patches` in the `FluxInstance` to patch
+the generated Flux `Kustomization` (from `.spec.sync`) with
+`spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
 
 ### Same-module cluster creation
 
@@ -171,20 +172,89 @@ module "flux_operator_bootstrap" {
 }
 ```
 
+### Root module subdirectory
+
 If your Terraform root module lives below the Git repo root, anchor manifest
 paths with `path.root`, for example:
 
 ```text
 repo/
 ├── clusters/staging/flux-system/flux-instance.yaml
-└── terraform/
+└── .aws/terraform/
     └── main.tf  # path.root
 ```
 
 ```hcl
 gitops_resources = {
-  flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance.yaml"
+  flux_instance_path = "${path.root}/../../clusters/staging/flux-system/flux-instance.yaml"
 }
+```
+
+### Node scheduling
+
+If the cluster uses dedicated nodes with taints (e.g. provisioned by Karpenter
+`NodePool`s), the node pool manifests can be deployed as prerequisites via
+`gitops_resources.prerequisites_paths` so the target nodes are available before
+the bootstrap job runs.
+
+Affinity and tolerations can then be configured at each layer:
+
+**Bootstrap job** — uses `job.affinity` and `job.tolerations`:
+
+```hcl
+module "flux_operator_bootstrap" {
+  # ...
+
+  job = {
+    tolerations = [{
+      key      = "node-role.kubernetes.io/control-plane"
+      operator = "Exists"
+      effect   = "NoSchedule"
+    }]
+  }
+}
+```
+
+**Flux Operator** — uses `operator.values` to pass Helm chart values:
+
+```hcl
+module "flux_operator_bootstrap" {
+  # ...
+
+  operator = {
+    values = {
+      tolerations = [{
+        key      = "node-role.kubernetes.io/control-plane"
+        operator = "Exists"
+        effect   = "NoSchedule"
+      }]
+    }
+  }
+}
+```
+
+**Flux components** (source-controller, etc.) — use `.spec.kustomize.patches`
+in the `FluxInstance` manifest to patch the generated Deployments:
+
+```yaml
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  # ...
+  kustomize:
+    patches:
+      - target:
+          kind: Deployment
+        patch: |
+          - op: add
+            path: /spec/template/spec/tolerations
+            value:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
 ```
 
 ## Inputs
@@ -206,11 +276,9 @@ gitops_resources = {
   - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
 - `operator` (`Default: {}`): Flux Operator settings
-  - `operator.image.repository` (`Optional`): container image repository; when set, overrides the default from the flux-operator Helm chart
-  - `operator.image.tag` (`Optional`): container image tag
-  - `operator.image.pull_policy` (`Optional`): container image pull policy
-  - `operator.chart.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
-  - `operator.chart.version` (`Optional`): Helm chart version constraint
+  - `operator.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
+  - `operator.version` (`Optional`): Helm chart version constraint
+  - `operator.values` (`Default: {}`): Helm chart values object passed to the operator install; use this to customize the operator deployment (e.g. image overrides, node affinity, tolerations, resource limits)
 - `timeout` (`Default: "5m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources
