@@ -1,5 +1,6 @@
 FROM ghcr.io/fluxcd/flux-cli:v2.8.3@sha256:1fe5c39881c0c1f857f0462f0692e365bea768228b33d31c209610f389775eb6 AS flux-cli
 FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.45.1@sha256:cf844df62557316644f07851ac3fae4aa00daaad3a018b53bd5add95bcfda907 AS flux-operator-cli
+FROM mikefarah/yq:4@sha256:603ebff15eb308a05f1c5b8b7613179cad859aed3ec9fdd04f2ef5d32345950e AS yq
 
 FROM alpine:3.23@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 AS builder
 
@@ -10,12 +11,13 @@ ARG TARGETARCH=amd64
 
 COPY --from=flux-cli /usr/local/bin/flux /out/usr/local/bin/flux
 COPY --from=flux-operator-cli /usr/local/bin/flux-operator /out/usr/local/bin/flux-operator
+COPY --from=yq /usr/bin/yq /out/usr/local/bin/yq
 
 RUN apk add --no-cache bash ca-certificates curl tar gzip && \
     curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-${TARGETOS}-${TARGETARCH}.tar.gz" | tar -xz -C /tmp && \
     mv "/tmp/${TARGETOS}-${TARGETARCH}/helm" /out/usr/local/bin/helm && \
     curl -fsSL -o /out/usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/${TARGETOS}/${TARGETARCH}/kubectl" && \
-    chmod +x /out/usr/local/bin/flux /out/usr/local/bin/flux-operator /out/usr/local/bin/helm /out/usr/local/bin/kubectl
+    chmod +x /out/usr/local/bin/flux /out/usr/local/bin/flux-operator /out/usr/local/bin/helm /out/usr/local/bin/kubectl /out/usr/local/bin/yq
 
 COPY scripts/bootstrap.sh /out/usr/local/bin/bootstrap.sh
 RUN chmod +x /out/usr/local/bin/bootstrap.sh
@@ -28,6 +30,7 @@ RUN ["/usr/local/bin/flux", "version", "--client"]
 RUN ["/usr/local/bin/flux-operator", "version", "--client"]
 RUN ["/usr/local/bin/helm", "version", "--short"]
 RUN ["/usr/local/bin/kubectl", "version", "--client"]
+RUN ["/usr/local/bin/yq", "--version"]
 RUN ["/busybox/sh", "-n", "/usr/local/bin/bootstrap.sh"]
 
 ENTRYPOINT ["/busybox/sh", "/usr/local/bin/bootstrap.sh"]

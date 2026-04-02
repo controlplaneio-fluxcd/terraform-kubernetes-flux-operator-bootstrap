@@ -49,8 +49,6 @@ spec:
 {{- if .Values.managedResources.hasSecrets }}
         - name: SECRETS_FILE
           value: /bootstrap-secrets/secrets.yaml
-        - name: SECRETS_SECRET_NAME
-          value: {{ .Release.Name }}
 {{- end }}
 {{- if .Values.managedResources.runtimeInfo.data }}
         - name: RUNTIME_INFO_FILE
