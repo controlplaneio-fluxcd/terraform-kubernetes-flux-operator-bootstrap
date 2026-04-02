@@ -8,6 +8,10 @@ updates:
     directory: /
     patterns: ["*"]
     multi-ecosystem-group: project
+  - package-ecosystem: terraform
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: project
   - package-ecosystem: github-actions
     directories:
       - .github/workflows
