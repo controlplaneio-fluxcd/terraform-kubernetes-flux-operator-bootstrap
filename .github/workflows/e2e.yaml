@@ -2,8 +2,6 @@ name: e2e
 
 on:
   pull_request:
-  schedule:
-    - cron: '0 2 * * *'
   workflow_dispatch:
 
 permissions:
@@ -12,7 +10,6 @@ permissions:
 
 jobs:
   e2e-pending:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Set pending status on PR
@@ -78,7 +75,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Update status on PR
-        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

@@ -110,15 +110,12 @@ module "flux_operator_bootstrap" {
         .dockerconfigjson: '${replace(local.ghcr_auth_dockerconfigjson, "'", "''")}'
     YAML
     runtime_info = {
+      labels = {
+        "reconcile.fluxcd.io/watch" = "Enabled"
+      }
       data = {
         cluster_name   = "staging"
         cluster_region = "eu-west-2"
-      }
-      labels = {
-        "toolkit.fluxcd.io/runtime" = "true"
-      }
-      annotations = {
-        "kustomize.toolkit.fluxcd.io/ssa" = "Merge"
       }
     }
   }
@@ -136,9 +133,33 @@ When `managed_resources.runtime_info` is set, the bootstrap job:
 
 This allows the `FluxInstance` manifest to use variable references like
 `${cluster_name}` that are resolved at bootstrap time. For steady-state
-reconciliation, use `.spec.kustomize.patches` in the `FluxInstance` to patch
-the generated Flux `Kustomization` (from `.spec.sync`) with
+reconciliation, use `.spec.kustomize.patches` in the `FluxInstance` to
+patch the generated Flux `Kustomization` (from `.spec.sync`) with
 `.spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
+
+Example:
+
+```yaml
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  # ...
+  kustomize:
+    patches:
+      - target:
+          kind: Kustomization
+          name: flux-system
+        patch: |
+          - op: add
+            path: /spec/postBuild
+            value:
+              substituteFrom:
+                - kind: ConfigMap
+                  name: flux-runtime-info
+```
 
 ### Same-module cluster creation
 
@@ -256,6 +277,123 @@ spec:
                 operator: Exists
                 effect: NoSchedule
 ```
+
+### Operator values from a local file
+
+When the Flux Operator `HelmRelease` is managed by Flux after bootstrap, its
+Helm values can be maintained in a single YAML file that is shared between
+Terraform (for bootstrap) and Flux (for steady-state reconciliation via
+`valuesFrom`).
+
+For example, given this file at
+`clusters/staging/flux-system/flux-operator-values.yaml`:
+
+```yaml
+multitenancy:
+  enabled: true
+tolerations:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/control-plane
+    operator: Exists
+web:
+  httpRoute:
+    enabled: true
+    hostnames:
+      - status.staging.example.com
+```
+
+A `kustomization.yaml` in the same directory creates a `ConfigMap` from the file
+so that the `HelmRelease` can reference it via `valuesFrom`:
+
+```yaml
+# clusters/staging/flux-system/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-instance.yaml
+  - flux-operator.yaml
+configMapGenerator:
+  - name: flux-operator-values
+    namespace: flux-system
+    files:
+      - values.yaml=flux-operator-values.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    reconcile.fluxcd.io/watch: Enabled
+```
+
+The `reconcile.fluxcd.io/watch: Enabled` label tells helm-controller to
+reconcile the `HelmRelease` whenever the `ConfigMap` content changes.
+
+The `HelmRelease` can be wrapped in a `ResourceSet` that depends on the
+`HTTPRoute` CRD, ensuring the operator is only upgraded after the Gateway
+API CRDs are available (the initial install is handled during bootstrap):
+
+```yaml
+# clusters/staging/flux-system/flux-operator.yaml
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  dependsOn:
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: helmreleases.helm.toolkit.fluxcd.io
+    - apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      name: httproutes.gateway.networking.k8s.io
+  resources:
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: flux-operator
+        namespace: flux-system
+      spec:
+        interval: 10m
+        url: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator
+        ref:
+          semver: '*'
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: flux-operator
+        namespace: flux-system
+      spec:
+        interval: 30m
+        releaseName: flux-operator
+        chartRef:
+          kind: OCIRepository
+          name: flux-operator
+        valuesFrom:
+          - kind: ConfigMap
+            name: flux-operator-values
+            valuesKey: values.yaml
+```
+
+During bootstrap, load the same file with `yamldecode(file(...))` and use
+`merge()` to override fields that should differ. For example, to disable the
+web UI during bootstrap (the `HTTPRoute` or `Ingress` CRD may not exist yet),
+while the GitOps reconciliation enables it afterwards:
+
+```hcl
+module "flux_operator_bootstrap" {
+  # ...
+
+  operator = {
+    values = merge(
+      yamldecode(file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")),
+      { web = { enabled = false } },
+    )
+  }
+}
+```
+
+Note that Terraform's `merge()` is shallow — it replaces top-level keys, not
+nested ones. This works here because the entire `web` key is being overridden
+with a single `enabled = false`, so no other values under `web` are needed.
 
 ## Inputs
 
