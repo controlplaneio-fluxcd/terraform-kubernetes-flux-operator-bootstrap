@@ -52,7 +52,7 @@ reconciled into the target namespace with server-side apply.
 into the `FluxInstance` manifest before the initial apply. For steady-state
 variable substitution, use `.spec.kustomize.patches` in the `FluxInstance` to
 patch the generated Flux `Kustomization` (from `.spec.sync`) with
-`spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
+`.spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
 
 Callers must configure the HashiCorp Helm and Kubernetes providers for the
 module.
@@ -138,7 +138,7 @@ This allows the `FluxInstance` manifest to use variable references like
 `${cluster_name}` that are resolved at bootstrap time. For steady-state
 reconciliation, use `.spec.kustomize.patches` in the `FluxInstance` to patch
 the generated Flux `Kustomization` (from `.spec.sync`) with
-`spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
+`.spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
 
 ### Same-module cluster creation
 
