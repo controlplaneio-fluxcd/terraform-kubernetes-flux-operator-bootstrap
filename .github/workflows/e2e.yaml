@@ -11,6 +11,20 @@ permissions:
   statuses: write
 
 jobs:
+  e2e-pending:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set pending status on PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=pending \
+            -f context="e2e" \
+            -f description="End-to-end tests running" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   e2e-batch:
     runs-on: ubuntu-latest
     strategy:
@@ -37,13 +51,9 @@ jobs:
 
   e2e:
     if: always()
-    needs: [e2e-batch]
+    needs: [e2e-pending, e2e-batch]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
       - name: Update status on PR
         if: github.event_name == 'workflow_dispatch'
         env:
