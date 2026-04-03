@@ -102,7 +102,7 @@ module "flux_operator_bootstrap" {
   revision = 1
 
   gitops_resources = {
-    flux_instance_path = "${path.root}/clusters/<cluster>/flux-system/flux-instance.yaml"
+    instance_path = "${path.root}/clusters/<cluster>/flux-system/flux-instance.yaml"
   }
 }
 ```

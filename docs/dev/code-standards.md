@@ -112,6 +112,22 @@ if grep -Fx "${previous_entry}" "${current_entries_file}" >/dev/null 2>&1; then
 encoded_payload="$(printf '%s' "${patched_payload}" | gzip | base64 -w 0)"
 ```
 
+### Kubernetes resource types in function arguments
+
+When passing resource types to functions that call `kubectl get`, use short
+unqualified names (`deployment`, `fluxinstance`) not fully-qualified CRD names
+(`fluxinstance.fluxcd.controlplane.io`). Fully-qualified names look like label
+keys or annotation keys at a glance, which misleads readers about what the
+function does:
+
+```sh
+# Bad — looks like a label key, not a resource type
+has_flux_ownership_label "fluxinstance.fluxcd.controlplane.io" "${name}" "${ns}"
+
+# Good — clearly a kubectl resource type
+has_flux_ownership_label "fluxinstance" "${name}" "${ns}"
+```
+
 ### Multi-step pipelines
 
 When a pipeline decodes, transforms, and re-encodes data, explain the format at

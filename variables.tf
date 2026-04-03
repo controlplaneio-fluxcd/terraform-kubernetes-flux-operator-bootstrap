@@ -1,21 +1,26 @@
 variable "gitops_resources" {
   description = "Resources that will be reconciled by Flux after bootstrap. These are applied with create-if-missing semantics so that Flux can take ownership of them for steady-state reconciliation."
   type = object({
-    flux_instance_path  = string
+    instance_path       = string
     prerequisites_paths = optional(list(string), [])
+    operator_chart = optional(object({
+      repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
+      version    = optional(string)
+      values     = optional(any, {})
+    }), {})
   })
   nullable = false
 
   validation {
     condition = (
-      can(file(abspath(var.gitops_resources.flux_instance_path))) &&
-      can(yamldecode(file(abspath(var.gitops_resources.flux_instance_path)))) &&
-      try(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
-      try(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).kind, "") == "FluxInstance" &&
-      try(length(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).metadata.name) > 0, false) &&
-      try(length(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).metadata.namespace) > 0, false)
+      can(file(abspath(var.gitops_resources.instance_path))) &&
+      can(yamldecode(file(abspath(var.gitops_resources.instance_path)))) &&
+      try(yamldecode(file(abspath(var.gitops_resources.instance_path))).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
+      try(yamldecode(file(abspath(var.gitops_resources.instance_path))).kind, "") == "FluxInstance" &&
+      try(length(yamldecode(file(abspath(var.gitops_resources.instance_path))).metadata.name) > 0, false) &&
+      try(length(yamldecode(file(abspath(var.gitops_resources.instance_path))).metadata.namespace) > 0, false)
     )
-    error_message = "gitops_resources.flux_instance_path must point to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
+    error_message = "gitops_resources.instance_path must point to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
   }
 
   validation {
@@ -70,17 +75,6 @@ variable "job" {
       }
     })
     tolerations = optional(list(any), [])
-  })
-  default  = {}
-  nullable = false
-}
-
-variable "operator" {
-  description = "Flux Operator settings. 'repository' and 'version' control the OCI Helm chart used to install the operator. 'values' is an optional object of Helm chart values passed to the operator install."
-  type = object({
-    repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
-    version    = optional(string)
-    values     = optional(any, {})
   })
   default  = {}
   nullable = false

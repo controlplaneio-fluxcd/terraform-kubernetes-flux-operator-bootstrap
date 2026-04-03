@@ -79,12 +79,13 @@ yq_metadata_field() {
   yq ".metadata.$2 // \"\"" "$1"
 }
 
-# split_yaml_documents splits a multi-document YAML file into one file per
-# document. Prerequisites and managed secrets need per-document processing
-# (create-if-missing, SSA per resource) which requires individual files.
+# split_yaml_manifests splits a YAML file that contains multiple manifests
+# separated by "---" into one file per manifest. Prerequisites and managed
+# secrets need per-manifest processing (create-if-missing, SSA per resource)
+# which requires individual files.
 # $1: input file, $2: output directory, $3: filename prefix.
 # Writes files as <output_dir>/<prefix>-000.yaml, <prefix>-001.yaml, etc.
-split_yaml_documents() {
+split_yaml_manifests() {
   input_file="$1"
   output_dir="$2"
   prefix="$3"
@@ -100,9 +101,9 @@ split_yaml_documents() {
   done
 }
 
-# count_yaml_documents prints the number of documents in a YAML file.
+# count_yaml_manifests prints the number of manifests in a YAML file.
 # $1: file path. Prints count to stdout.
-count_yaml_documents() {
+count_yaml_manifests() {
   yq ea '[.] | length' "$1"
 }
 
@@ -111,14 +112,14 @@ count_yaml_documents() {
 # ---------------------------------------------------------------------------
 
 # validate_flux_instance_file checks that the FluxInstance manifest (read from
-# the global flux_instance_file) is a single document with kind FluxInstance.
+# the global flux_instance_file) contains a single manifest with kind FluxInstance.
 # Returns non-zero on failure.
 validate_flux_instance_file() {
-  document_count="$(count_yaml_documents "${flux_instance_file}")"
+  manifest_count="$(count_yaml_manifests "${flux_instance_file}")"
   manifest_kind="$(yq_field "${flux_instance_file}" kind)"
 
-  if [ "${document_count}" != "1" ]; then
-    fail "FluxInstance manifest ${flux_instance_file} must contain exactly one YAML document"
+  if [ "${manifest_count}" != "1" ]; then
+    fail "FluxInstance file ${flux_instance_file} must contain exactly one manifest"
     return 1
   fi
 
@@ -126,6 +127,28 @@ validate_flux_instance_file() {
     fail "FluxInstance manifest ${flux_instance_file} must have kind FluxInstance, got ${manifest_kind:-<unknown>}"
     return 1
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Flux ownership detection
+# ---------------------------------------------------------------------------
+
+# has_flux_ownership_label checks whether a resource has been adopted by
+# kustomize-controller or helm-controller by looking for their ownership labels.
+# Resources not yet adopted can be safely re-applied by the bootstrap script.
+# $1: resource kind, $2: resource name, $3: namespace. Returns 0 if adopted.
+has_flux_ownership_label() {
+  resource_kind="$1"
+  resource_name="$2"
+  resource_namespace="$3"
+  # Extract label keys as a space-separated string.
+  label_keys="$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+    -o go-template='{{range $k, $v := .metadata.labels}}{{$k}} {{end}}' 2>/dev/null || true)"
+  case "${label_keys}" in
+    *kustomize.toolkit.fluxcd.io/name*) return 0 ;;
+    *helm.toolkit.fluxcd.io/name*) return 0 ;;
+  esac
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -155,15 +178,26 @@ format_prerequisite_details() {
   fi
 }
 
-# apply_prerequisite_document applies a single manifest if it doesn't already
-# exist in the cluster (create-if-missing). $1: manifest file path.
-apply_prerequisite_document() {
+# apply_prerequisite_manifest applies a single manifest if it doesn't exist in
+# the cluster, or re-applies it if it exists but hasn't been adopted by Flux yet
+# (no kustomize-controller ownership label). Once Flux adopts the resource, the
+# bootstrap script stops touching it. $1: manifest file path.
+apply_prerequisite_manifest() {
   manifest_file="$1"
   manifest_info="$(prerequisite_details "${manifest_file}")"
   manifest_label="$(format_prerequisite_details "${manifest_info}")"
 
   if kubectl get -f "${manifest_file}" >/dev/null 2>&1; then
-    log "- skip ${manifest_label}"
+    # Parse kind|name|namespace from prerequisite_details output.
+    p_kind="$(printf '%s' "${manifest_info}" | cut -d'|' -f1)"
+    p_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f2)"
+    p_ns="$(printf '%s' "${manifest_info}" | cut -d'|' -f3)"
+    if has_flux_ownership_label "${p_kind}" "${p_name}" "${p_ns}"; then
+      log "- skip ${manifest_label} (adopted by Flux)"
+      return 0
+    fi
+    log "~ reapply ${manifest_label} (not yet adopted by Flux)"
+    kubectl apply -f "${manifest_file}" >/dev/null
     return 0
   fi
 
@@ -172,7 +206,7 @@ apply_prerequisite_document() {
 }
 
 # apply_prerequisites iterates over prerequisite-*.yaml files, splits each into
-# individual documents, and applies them with create-if-missing semantics.
+# individual manifests, and applies them with create-if-missing semantics.
 # $1: scratch directory for temporary split files.
 apply_prerequisites() {
   scratch_dir="$1"
@@ -185,14 +219,14 @@ apply_prerequisites() {
 
     found_prerequisite="true"
     split_dir="${scratch_dir}/$(basename "${prerequisite_file}" .yaml)"
-    split_yaml_documents "${prerequisite_file}" "${split_dir}" "doc"
+    split_yaml_manifests "${prerequisite_file}" "${split_dir}" "doc"
 
     for manifest_file in "${split_dir}"/doc-*.yaml; do
       if [ ! -f "${manifest_file}" ]; then
         continue
       fi
 
-      apply_prerequisite_document "${manifest_file}"
+      apply_prerequisite_manifest "${manifest_file}"
     done
   done
 
@@ -449,7 +483,7 @@ reconcile_managed_resources() {
   # Managed secrets
   if [ -n "${managed_secrets_file}" ] && [ -f "${managed_secrets_file}" ]; then
     split_dir="${scratch_dir}/managed-secrets"
-    split_yaml_documents "${managed_secrets_file}" "${split_dir}" "secret"
+    split_yaml_manifests "${managed_secrets_file}" "${split_dir}" "secret"
 
     found_secret="false"
     for manifest_file in "${split_dir}"/secret-*.yaml; do
@@ -529,10 +563,12 @@ helm_release_status() {
   helm status "$1" -n "$2" 2>/dev/null | awk '/^STATUS:/{print $2; exit}'
 }
 
-# install_flux_operator installs the flux-operator Helm chart from the OCI
-# repository. Uses operator_values_file (via -f) for custom chart values and
-# debug_flux_operator_image_tag (via --set) for testing overrides.
-install_flux_operator() {
+# install_or_upgrade_flux_operator installs or upgrades the flux-operator Helm
+# chart from the OCI repository. Uses --install so it works for both fresh
+# installs and upgrades of existing releases. Uses operator_values_file (via -f)
+# for custom chart values and debug_flux_operator_image_tag (via --set) for
+# testing overrides.
+install_or_upgrade_flux_operator() {
   values_args=""
   set_args=""
   install_timeout="${bootstrap_timeout}"
@@ -547,7 +583,7 @@ install_flux_operator() {
   if [ -n "${operator_chart_version}" ]; then
     version_args="--version=${operator_chart_version}"
   fi
-  helm install flux-operator "oci://${operator_chart_repository}" \
+  helm upgrade --install flux-operator "oci://${operator_chart_repository}" \
     --namespace="${namespace}" \
     --wait=watcher \
     --timeout="${install_timeout}" \
@@ -699,22 +735,28 @@ if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
   flux_instance_file="${scratch_dir}/flux-instance.yaml"
 fi
 
-# 5. Install Flux Operator (or recover from failed/stuck state)
+# 5. Install Flux Operator (or recover from failed/stuck state, or upgrade if
+#    not yet adopted by helm-controller)
 unlock_helm_release "flux-operator" "${namespace}"
 flux_operator_status="$(helm_release_status "flux-operator" "${namespace}")"
 case "${flux_operator_status}" in
   "deployed")
-    log "Flux Operator exists"
+    if has_flux_ownership_label "deployment" "flux-operator" "${namespace}"; then
+      log "Flux Operator exists (adopted by Flux)"
+    else
+      log "Upgrade Flux Operator (not yet adopted by Flux)"
+      install_or_upgrade_flux_operator
+    fi
     ;;
   "failed")
     log "Delete failed Flux Operator release"
     helm delete flux-operator -n "${namespace}" --no-hooks >/dev/null
     log "Install Flux Operator"
-    install_flux_operator
+    install_or_upgrade_flux_operator
     ;;
   *)
     log "Install Flux Operator"
-    install_flux_operator
+    install_or_upgrade_flux_operator
     ;;
 esac
 
@@ -722,14 +764,18 @@ esac
 log "FluxInstance CRD"
 wait_for_flux_instance_crd
 
-# 7. Create FluxInstance (create-if-missing)
+# 7. Create FluxInstance (create-if-missing, or re-apply if not yet adopted)
 instance_created="false"
 if ! kubectl get fluxinstance.fluxcd.controlplane.io "${instance_name}" -n "${namespace}" >/dev/null 2>&1; then
   log "Create FluxInstance"
   kubectl apply -f "${flux_instance_file}" >/dev/null
   instance_created="true"
+elif has_flux_ownership_label "fluxinstance" "${instance_name}" "${namespace}"; then
+  log "FluxInstance exists (adopted by Flux)"
 else
-  log "FluxInstance exists"
+  log "Reapply FluxInstance (not yet adopted by Flux)"
+  kubectl apply -f "${flux_instance_file}" >/dev/null
+  instance_created="true"
 fi
 
 # 8. Wait for FluxInstance to become ready
