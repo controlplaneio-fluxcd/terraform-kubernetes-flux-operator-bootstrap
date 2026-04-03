@@ -125,10 +125,16 @@ fi
 note "Verifying managed secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
 
-section "No-op Plan"
+section "No-op"
 note "Running plan with identical inputs to verify zero diff"
 terraform -chdir="${success_tf_dir}" plan -no-color -detailed-exitcode
-note "Confirmed: no changes when inputs are unchanged"
+note "Running apply with identical inputs to verify zero diff"
+apply_output="$(terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve 2>&1)"
+printf '%s\n' "${apply_output}"
+if ! printf '%s' "${apply_output}" | grep -q "No changes."; then
+  echo "Expected 'No changes.' in apply output but it was not found" >&2
+  exit 1
+fi
 
 section "Idempotency"
 note "Introducing drift, then removing one managed Secret from desired state"
@@ -180,8 +186,8 @@ if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]
   echo "Got: $(inventory_entries flux-operator-bootstrap)" >&2
   exit 1
 fi
-if [ "$(prerequisite_configmap_value)" != "drifted" ]; then
-  echo "Prerequisite drift was unexpectedly reconciled" >&2
+if [ "$(prerequisite_configmap_value)" != "initial" ]; then
+  echo "Prerequisite drift was not corrected (expected re-apply since not yet adopted by Flux)" >&2
   exit 1
 fi
 
