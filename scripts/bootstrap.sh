@@ -2,25 +2,51 @@
 set -eu
 export PATH="/busybox:$PATH"
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# Shared timeout for Flux Operator install, CRD readiness, and FluxInstance wait.
+bootstrap_timeout="${TIMEOUT:-5m}"
+
+# FluxInstance manifest and prerequisite manifests directory (mounted from ConfigMap).
 flux_instance_file="${FLUX_INSTANCE_FILE:?FLUX_INSTANCE_FILE is required}"
 prerequisites_dir="${PREREQUISITES_DIR:-/bootstrap}"
-secrets_file="${SECRETS_FILE:-}"
-timeout="${TIMEOUT:-5m}"
-bootstrap_namespace="${BOOTSTRAP_NAMESPACE:?BOOTSTRAP_NAMESPACE is required}"
-service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
-cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
-config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
+
+# Managed secrets YAML file (mounted from Secret, may be empty).
+managed_secrets_file="${SECRETS_FILE:-}"
+
+# Runtime info files used to build the flux-runtime-info ConfigMap and
+# substitute variables into the FluxInstance manifest via flux envsubst.
 runtime_info_file="${RUNTIME_INFO_FILE:-}"
 runtime_info_labels_file="${RUNTIME_INFO_LABELS_FILE:-}"
 runtime_info_annotations_file="${RUNTIME_INFO_ANNOTATIONS_FILE:-}"
 runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-flux-runtime-info}"
-inventory_config_map_name="inventory"
+
+# Flux Operator Helm chart settings.
 operator_chart_repository="${OPERATOR_CHART_REPOSITORY:-ghcr.io/controlplaneio-fluxcd/charts/flux-operator}"
 operator_chart_version="${OPERATOR_CHART_VERSION:-}"
 operator_values_file="${OPERATOR_VALUES_FILE:-}"
+
+# Bootstrap transport resources, cleaned up after the job completes.
+bootstrap_namespace="${BOOTSTRAP_NAMESPACE:?BOOTSTRAP_NAMESPACE is required}"
+bootstrap_service_account="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
+bootstrap_cluster_role_binding="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
+bootstrap_config_map="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
+
+# Inventory ConfigMap tracks managed resources for garbage collection.
+inventory_config_map_name="inventory"
+
+# SSA field manager identity, matching kustomize-controller conventions.
+ssa_field_manager="flux-operator-bootstrap"
+
+# Testing-only debug flags.
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 debug_flux_operator_image_tag="${DEBUG_FLUX_OPERATOR_IMAGE_TAG:-}"
-field_manager="flux-operator-bootstrap"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
 log() {
   printf '%s\n' "$*" >&2
@@ -30,18 +56,34 @@ fail() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
-extract_metadata_value() {
+# ---------------------------------------------------------------------------
+# YAML helpers
+# ---------------------------------------------------------------------------
+
+# flux_instance_metadata prints a metadata field from the FluxInstance manifest
+# (global flux_instance_file). $1: field name (e.g. "name", "namespace").
+# Prints to stdout.
+flux_instance_metadata() {
   yq ".metadata.$1 // \"\"" "${flux_instance_file}"
 }
 
-extract_top_level_value() {
+# yq_field prints a top-level field from a YAML file.
+# $1: file path, $2: field name. Prints to stdout.
+yq_field() {
   yq ".$2 // \"\"" "$1"
 }
 
-extract_manifest_metadata_value() {
+# yq_metadata_field prints a metadata field from a YAML file.
+# $1: file path, $2: field name. Prints to stdout.
+yq_metadata_field() {
   yq ".metadata.$2 // \"\"" "$1"
 }
 
+# split_yaml_documents splits a multi-document YAML file into one file per
+# document. Prerequisites and managed secrets need per-document processing
+# (create-if-missing, SSA per resource) which requires individual files.
+# $1: input file, $2: output directory, $3: filename prefix.
+# Writes files as <output_dir>/<prefix>-000.yaml, <prefix>-001.yaml, etc.
 split_yaml_documents() {
   input_file="$1"
   output_dir="$2"
@@ -58,13 +100,22 @@ split_yaml_documents() {
   done
 }
 
+# count_yaml_documents prints the number of documents in a YAML file.
+# $1: file path. Prints count to stdout.
 count_yaml_documents() {
   yq ea '[.] | length' "$1"
 }
 
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+# validate_flux_instance_file checks that the FluxInstance manifest (read from
+# the global flux_instance_file) is a single document with kind FluxInstance.
+# Returns non-zero on failure.
 validate_flux_instance_file() {
   document_count="$(count_yaml_documents "${flux_instance_file}")"
-  manifest_kind="$(extract_top_level_value "${flux_instance_file}" kind)"
+  manifest_kind="$(yq_field "${flux_instance_file}" kind)"
 
   if [ "${document_count}" != "1" ]; then
     fail "FluxInstance manifest ${flux_instance_file} must contain exactly one YAML document"
@@ -77,12 +128,21 @@ validate_flux_instance_file() {
   fi
 }
 
-manifest_details() {
+# ---------------------------------------------------------------------------
+# Prerequisites (create-if-missing)
+# ---------------------------------------------------------------------------
+
+# prerequisite_details uses kubectl dry-run to resolve the final kind/name/namespace
+# of a manifest, handling defaulting and multi-resource types that yq alone
+# can't resolve. $1: manifest file path. Prints "kind|name|namespace" to stdout.
+prerequisite_details() {
   manifest_file="$1"
   kubectl create --dry-run=client -f "${manifest_file}" -o jsonpath='{.kind}|{.metadata.name}|{.metadata.namespace}'
 }
 
-format_manifest_details() {
+# format_prerequisite_details formats the pipe-delimited output of prerequisite_details
+# into a human-readable label. $1: "kind|name|namespace" string. Prints to stdout.
+format_prerequisite_details() {
   manifest_info="$1"
   manifest_kind="$(printf '%s' "${manifest_info}" | cut -d'|' -f1)"
   manifest_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f2)"
@@ -95,10 +155,12 @@ format_manifest_details() {
   fi
 }
 
+# apply_prerequisite_document applies a single manifest if it doesn't already
+# exist in the cluster (create-if-missing). $1: manifest file path.
 apply_prerequisite_document() {
   manifest_file="$1"
-  manifest_info="$(manifest_details "${manifest_file}")"
-  manifest_label="$(format_manifest_details "${manifest_info}")"
+  manifest_info="$(prerequisite_details "${manifest_file}")"
+  manifest_label="$(format_prerequisite_details "${manifest_info}")"
 
   if kubectl get -f "${manifest_file}" >/dev/null 2>&1; then
     log "- skip ${manifest_label}"
@@ -109,6 +171,9 @@ apply_prerequisite_document() {
   kubectl apply -f "${manifest_file}" >/dev/null
 }
 
+# apply_prerequisites iterates over prerequisite-*.yaml files, splits each into
+# individual documents, and applies them with create-if-missing semantics.
+# $1: scratch directory for temporary split files.
 apply_prerequisites() {
   scratch_dir="$1"
   found_prerequisite="false"
@@ -136,24 +201,18 @@ apply_prerequisites() {
   fi
 }
 
-wait_for_flux_instance_crd() {
-  end_time=$(( $(date +%s) + 300 ))
-  while [ "$(date +%s)" -lt "${end_time}" ]; do
-    if kubectl get crd fluxinstances.fluxcd.controlplane.io >/dev/null 2>&1; then
-      log "CRD found; waiting for Established"
-      kubectl wait --for=condition=Established crd/fluxinstances.fluxcd.controlplane.io --timeout="${timeout}" >/dev/null
-      return 0
-    fi
-    sleep 2
-  done
-
-  fail "Timed out waiting for FluxInstance CRD to be created"
-  return 1
-}
+# ---------------------------------------------------------------------------
+# Managed resources (server-side apply with inventory and garbage collection)
+# ---------------------------------------------------------------------------
 
 # Field managers to strip before SSA, matching kustomize-controller defaults.
 disallowed_field_managers="kubectl before-first-apply"
 
+# strip_disallowed_field_managers removes field managers (e.g. "kubectl" from
+# manual edits) that would conflict with SSA ownership. Without this, SSA would
+# fail or silently skip fields owned by disallowed managers. Indices are
+# collected in reverse order so removals don't shift later indices.
+# $1: resource kind, $2: resource name, $3: resource namespace.
 strip_disallowed_field_managers() {
   resource_kind="$1"
   resource_name="$2"
@@ -163,6 +222,8 @@ strip_disallowed_field_managers() {
     return 0
   fi
 
+  # Fetch all field managers as a space-separated list of "manager=operation" pairs
+  # using a Go template. Example output: "flux-operator-bootstrap=Apply kubectl=Update"
   managed_fields="$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
     -o go-template='{{range $i, $mf := .metadata.managedFields}}{{if $i}} {{end}}{{$mf.manager}}={{$mf.operation}}{{end}}' 2>/dev/null || true)"
 
@@ -170,10 +231,14 @@ strip_disallowed_field_managers() {
     return 0
   fi
 
-  # Collect indices to remove (in reverse order so indices stay valid).
+  # Walk the list and collect indices of disallowed managers. Indices are
+  # prepended (not appended) so they end up in reverse order — this is
+  # important because removing index N shifts all later indices down by one.
   indices_to_remove=""
   idx=0
   for manager_op in ${managed_fields}; do
+    # ${var%%=*} strips everything from the first "=" onwards, leaving just
+    # the manager name (e.g. "kubectl=Update" becomes "kubectl").
     manager="${manager_op%%=*}"
     for disallowed in ${disallowed_field_managers}; do
       if [ "${manager}" = "${disallowed}" ]; then
@@ -188,6 +253,7 @@ strip_disallowed_field_managers() {
     return 0
   fi
 
+  # Build a JSON Patch array of "remove" operations for each disallowed index.
   patch="["
   first="true"
   for i in ${indices_to_remove}; do
@@ -205,13 +271,18 @@ strip_disallowed_field_managers() {
     --type=json -p "${patch}" >/dev/null
 }
 
+# reconcile_managed_resource applies a single resource using server-side apply.
+# It dry-runs first to detect the state (missing, drifted, or in-sync) and only
+# performs the actual apply when the resource needs to be created or corrected.
+# $1: manifest file path, $2: space-separated list of allowed resource kinds.
 reconcile_managed_resource() {
   manifest_file="$1"
   allowed_kinds="$2"
-  manifest_kind="$(extract_top_level_value "${manifest_file}" kind)"
-  manifest_name="$(extract_manifest_metadata_value "${manifest_file}" name)"
-  manifest_namespace="$(extract_manifest_metadata_value "${manifest_file}" namespace)"
+  manifest_kind="$(yq_field "${manifest_file}" kind)"
+  manifest_name="$(yq_metadata_field "${manifest_file}" name)"
+  manifest_namespace="$(yq_metadata_field "${manifest_file}" namespace)"
 
+  # Validate the resource kind is in the allow list.
   found_allowed="false"
   for kind in ${allowed_kinds}; do
     if [ "${manifest_kind}" = "${kind}" ]; then
@@ -236,7 +307,9 @@ reconcile_managed_resource() {
 
   strip_disallowed_field_managers "${manifest_kind}" "${manifest_name}" "${namespace}"
 
-  if ! dry_run_output="$(kubectl apply --server-side --dry-run=server --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" 2>&1)"; then
+  # Server-side dry-run to detect the current state without mutating the cluster.
+  # The output contains "unchanged", "created", "configured", or "serverside-applied".
+  if ! dry_run_output="$(kubectl apply --server-side --dry-run=server --force-conflicts --field-manager="${ssa_field_manager}" -f "${manifest_file}" -n "${namespace}" 2>&1)"; then
     printf '%s\n' "${dry_run_output}" >&2
     fail "Failed to dry-run apply ${manifest_kind} ${namespace}/${manifest_name}"
     return 1
@@ -264,12 +337,21 @@ reconcile_managed_resource() {
   fi
 
   log "~ ${manifest_kind} ${namespace}/${manifest_name} (${resource_state})"
-  kubectl apply --server-side --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
+  kubectl apply --server-side --force-conflicts --field-manager="${ssa_field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# Inventory tracking
+# ---------------------------------------------------------------------------
+
+# load_inventory_entries reads the inventory ConfigMap and writes one
+# "Kind/namespace/name" entry per line to the output file. If the ConfigMap
+# doesn't exist yet, the output file is left empty.
+# $1: output file path.
 load_inventory_entries() {
   output_file="$1"
 
+  # Truncate the output file (": >" is the shell idiom for this).
   : > "${output_file}"
 
   if ! kubectl get configmap "${inventory_config_map_name}" -n "${bootstrap_namespace}" >/dev/null 2>&1; then
@@ -281,12 +363,19 @@ load_inventory_entries() {
     return 0
   fi
 
+  # The ConfigMap stores entries as a YAML list ("- Kind/ns/name" per line).
+  # Strip the "- " prefix to get plain "Kind/ns/name" lines.
   printf '%s\n' "${entries}" | grep '^- ' | sed 's/^- //' > "${output_file}"
 }
 
+# update_inventory writes the current entries back to the inventory ConfigMap.
+# $1: file with one "Kind/namespace/name" entry per line.
 update_inventory() {
   entries_file="$1"
 
+  # Read entries line by line and format them as a YAML list.
+  # "IFS=" prevents whitespace trimming, "-r" prevents backslash interpretation,
+  # and the "|| [ -n ]" handles files that don't end with a newline.
   yaml_list=""
   while IFS= read -r entry || [ -n "${entry}" ]; do
     if [ -z "${entry}" ]; then
@@ -301,6 +390,7 @@ update_inventory() {
     []"
   fi
 
+  # Apply the ConfigMap from stdin using a heredoc.
   kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -312,6 +402,10 @@ data:
 EOF
 }
 
+# garbage_collect_removed_entries deletes resources that were in the previous
+# inventory but are absent from the current one, i.e. removed from the
+# Terraform inputs between runs.
+# $1: previous entries file, $2: current entries file (same line format).
 garbage_collect_removed_entries() {
   previous_entries_file="$1"
   current_entries_file="$2"
@@ -321,6 +415,8 @@ garbage_collect_removed_entries() {
       continue
     fi
 
+    # grep -Fx matches the full line literally (F=fixed string, x=whole line).
+    # If the entry still exists in the current file, skip it.
     if grep -Fx "${previous_entry}" "${current_entries_file}" >/dev/null 2>&1; then
       continue
     fi
@@ -334,6 +430,14 @@ garbage_collect_removed_entries() {
   done < "${previous_entries_file}"
 }
 
+# ---------------------------------------------------------------------------
+# Managed resource reconciliation (secrets + runtime info)
+# ---------------------------------------------------------------------------
+
+# reconcile_managed_resources orchestrates SSA for all managed resources:
+# splits and applies secrets, builds and applies the runtime-info ConfigMap,
+# then garbage-collects any resources removed since the previous run.
+# $1: scratch directory for temporary files.
 reconcile_managed_resources() {
   scratch_dir="$1"
   previous_entries_file="${scratch_dir}/previous-inventory-entries.txt"
@@ -343,9 +447,9 @@ reconcile_managed_resources() {
   : > "${current_entries_file}"
 
   # Managed secrets
-  if [ -n "${secrets_file}" ] && [ -f "${secrets_file}" ]; then
+  if [ -n "${managed_secrets_file}" ] && [ -f "${managed_secrets_file}" ]; then
     split_dir="${scratch_dir}/managed-secrets"
-    split_yaml_documents "${secrets_file}" "${split_dir}" "secret"
+    split_yaml_documents "${managed_secrets_file}" "${split_dir}" "secret"
 
     found_secret="false"
     for manifest_file in "${split_dir}"/secret-*.yaml; do
@@ -354,7 +458,7 @@ reconcile_managed_resources() {
       fi
 
       found_secret="true"
-      current_name="$(extract_manifest_metadata_value "${manifest_file}" name)"
+      current_name="$(yq_metadata_field "${manifest_file}" name)"
       if [ -z "${current_name}" ]; then
         fail "secrets_yaml contains a Secret without metadata.name"
         return 1
@@ -414,73 +518,24 @@ reconcile_managed_resources() {
   update_inventory "${current_entries_file}"
 }
 
-cleanup() {
-  log "Cleanup bootstrap transport resources"
-  if [ -n "${scratch_dir:-}" ] && [ -d "${scratch_dir}" ]; then
-    rm -rf "${scratch_dir}"
-  fi
-  if ! kubectl delete configmap "${config_map_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
-    log "Failed to delete ConfigMap ${bootstrap_namespace}/${config_map_name}"
-  fi
-  # The secrets Secret is owned by Terraform and not cleaned up here.
-  if ! kubectl delete serviceaccount "${service_account_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
-    log "Failed to delete ServiceAccount ${bootstrap_namespace}/${service_account_name}"
-  fi
-  if ! kubectl delete clusterrolebinding "${cluster_role_binding_name}" --ignore-not-found=true >/dev/null; then
-    log "Failed to delete ClusterRoleBinding ${cluster_role_binding_name}"
-  fi
-}
+# ---------------------------------------------------------------------------
+# Flux Operator (Helm install and unlock)
+# ---------------------------------------------------------------------------
 
-if ! validate_flux_instance_file; then
-  exit 1
-fi
-
-namespace="$(extract_metadata_value namespace)"
-instance_name="$(extract_metadata_value name)"
-
-if [ -z "${namespace}" ] || [ -z "${instance_name}" ]; then
-  fail "Failed to determine FluxInstance namespace or name from ${flux_instance_file}"
-  exit 1
-fi
-
-log "Target: ${namespace}/${instance_name}"
-log "Bootstrap namespace: ${bootstrap_namespace}"
-
-trap cleanup EXIT
-scratch_dir="$(mktemp -d)"
-
-log "Prerequisites"
-apply_prerequisites "${scratch_dir}"
-
-if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-  log "Namespace exists: ${namespace}"
-else
-  log "Create namespace: ${namespace}"
-  kubectl create namespace "${namespace}" >/dev/null
-fi
-
-log "Managed resources"
-reconcile_managed_resources "${scratch_dir}"
-
-if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
-  log "Substitute runtime info variables in FluxInstance manifest"
-  export_args=""
-  while IFS="=" read -r key value; do
-    export_args="${export_args} ${key}=${value}"
-  done < "${runtime_info_file}"
-  sh -c "export${export_args}; flux envsubst --strict" \
-    < "${flux_instance_file}" > "${scratch_dir}/flux-instance.yaml"
-  flux_instance_file="${scratch_dir}/flux-instance.yaml"
-fi
-
+# helm_release_status prints the status of a Helm release (e.g. "deployed",
+# "failed", "pending-install") or empty string if the release doesn't exist.
+# $1: release name, $2: namespace. Prints to stdout.
 helm_release_status() {
   helm status "$1" -n "$2" 2>/dev/null | awk '/^STATUS:/{print $2; exit}'
 }
 
+# install_flux_operator installs the flux-operator Helm chart from the OCI
+# repository. Uses operator_values_file (via -f) for custom chart values and
+# debug_flux_operator_image_tag (via --set) for testing overrides.
 install_flux_operator() {
   values_args=""
   set_args=""
-  install_timeout="${timeout}"
+  install_timeout="${bootstrap_timeout}"
   if [ -n "${operator_values_file}" ]; then
     values_args="-f ${operator_values_file}"
   fi
@@ -501,6 +556,11 @@ install_flux_operator() {
     ${set_args}
 }
 
+# unlock_helm_release recovers a Helm release stuck in a pending state (e.g.
+# after a timeout or crash). Helm stores release metadata in Secrets; this
+# function decodes the latest one, patches its status from "pending-*" to
+# "failed", and re-encodes it so a subsequent helm install/delete can proceed.
+# $1: release name, $2: release namespace.
 unlock_helm_release() {
   release_name="$1"
   release_namespace="$2"
@@ -522,11 +582,13 @@ unlock_helm_release() {
         helm delete "${release_name}" -n "${release_namespace}" --no-hooks 2>/dev/null || true
         return 0
       fi
-      # Decode the release payload, patch the status, and re-encode.
+      # The release payload is stored as: JSON -> gzip -> base64. We reverse
+      # that to get the JSON, sed-replace the status field, then re-encode.
       release_payload="$(kubectl get secret "${latest_secret}" -n "${release_namespace}" \
         -o go-template='{{index .data "release"}}' | base64 -d | gzip -d)"
       patched_payload="$(printf '%s' "${release_payload}" \
         | sed "s/\"status\":\"${release_status}\"/\"status\":\"failed\"/")"
+      # "base64 -w 0" outputs on a single line (no wrapping).
       encoded_payload="$(printf '%s' "${patched_payload}" | gzip | base64 -w 0)"
       kubectl patch secret "${latest_secret}" -n "${release_namespace}" \
         --type='merge' -p "{\"data\":{\"release\":\"${encoded_payload}\"}}" >/dev/null
@@ -541,6 +603,103 @@ unlock_helm_release() {
   esac
 }
 
+# ---------------------------------------------------------------------------
+# FluxInstance CRD
+# ---------------------------------------------------------------------------
+
+# wait_for_flux_instance_crd polls for the CRD to appear (the operator creates
+# it asynchronously after install) then waits for it to become Established.
+wait_for_flux_instance_crd() {
+  end_time=$(( $(date +%s) + 300 ))
+  while [ "$(date +%s)" -lt "${end_time}" ]; do
+    if kubectl get crd fluxinstances.fluxcd.controlplane.io >/dev/null 2>&1; then
+      log "CRD found; waiting for Established"
+      kubectl wait --for=condition=Established crd/fluxinstances.fluxcd.controlplane.io --timeout="${bootstrap_timeout}" >/dev/null
+      return 0
+    fi
+    sleep 2
+  done
+
+  fail "Timed out waiting for FluxInstance CRD to be created"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Cleanup (runs on exit via trap)
+# ---------------------------------------------------------------------------
+
+cleanup() {
+  log "Cleanup bootstrap transport resources"
+  if [ -n "${scratch_dir:-}" ] && [ -d "${scratch_dir}" ]; then
+    rm -rf "${scratch_dir}"
+  fi
+  if ! kubectl delete configmap "${bootstrap_config_map}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
+    log "Failed to delete ConfigMap ${bootstrap_namespace}/${bootstrap_config_map}"
+  fi
+  # The secrets Secret is owned by Terraform and not cleaned up here.
+  if ! kubectl delete serviceaccount "${bootstrap_service_account}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
+    log "Failed to delete ServiceAccount ${bootstrap_namespace}/${bootstrap_service_account}"
+  fi
+  if ! kubectl delete clusterrolebinding "${bootstrap_cluster_role_binding}" --ignore-not-found=true >/dev/null; then
+    log "Failed to delete ClusterRoleBinding ${bootstrap_cluster_role_binding}"
+  fi
+}
+
+# ===========================================================================
+# Main
+# ===========================================================================
+
+if ! validate_flux_instance_file; then
+  exit 1
+fi
+
+namespace="$(flux_instance_metadata namespace)"
+instance_name="$(flux_instance_metadata name)"
+
+if [ -z "${namespace}" ] || [ -z "${instance_name}" ]; then
+  fail "Failed to determine FluxInstance namespace or name from ${flux_instance_file}"
+  exit 1
+fi
+
+log "Target: ${namespace}/${instance_name}"
+log "Bootstrap namespace: ${bootstrap_namespace}"
+
+trap cleanup EXIT
+scratch_dir="$(mktemp -d)"
+
+# 1. Apply prerequisites (create-if-missing)
+log "Prerequisites"
+apply_prerequisites "${scratch_dir}"
+
+# 2. Ensure target namespace exists
+if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+  log "Namespace exists: ${namespace}"
+else
+  log "Create namespace: ${namespace}"
+  kubectl create namespace "${namespace}" >/dev/null
+fi
+
+# 3. Reconcile managed resources (secrets, runtime info) with SSA
+log "Managed resources"
+reconcile_managed_resources "${scratch_dir}"
+
+# 4. Substitute runtime info variables into FluxInstance manifest
+if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
+  log "Substitute runtime info variables in FluxInstance manifest"
+  # Build "key=value" pairs from the runtime info file into a single string,
+  # then export them in a subshell so flux envsubst can replace ${var} references
+  # in the FluxInstance manifest. The subshell (sh -c) is needed because this
+  # script runs under "set -eu" and we don't want to pollute its environment.
+  export_args=""
+  while IFS="=" read -r key value; do
+    export_args="${export_args} ${key}=${value}"
+  done < "${runtime_info_file}"
+  sh -c "export${export_args}; flux envsubst --strict" \
+    < "${flux_instance_file}" > "${scratch_dir}/flux-instance.yaml"
+  flux_instance_file="${scratch_dir}/flux-instance.yaml"
+fi
+
+# 5. Install Flux Operator (or recover from failed/stuck state)
 unlock_helm_release "flux-operator" "${namespace}"
 flux_operator_status="$(helm_release_status "flux-operator" "${namespace}")"
 case "${flux_operator_status}" in
@@ -559,9 +718,11 @@ case "${flux_operator_status}" in
     ;;
 esac
 
+# 6. Wait for FluxInstance CRD to be available
 log "FluxInstance CRD"
 wait_for_flux_instance_crd
 
+# 7. Create FluxInstance (create-if-missing)
 instance_created="false"
 if ! kubectl get fluxinstance.fluxcd.controlplane.io "${instance_name}" -n "${namespace}" >/dev/null 2>&1; then
   log "Create FluxInstance"
@@ -571,13 +732,15 @@ else
   log "FluxInstance exists"
 fi
 
+# 8. Wait for FluxInstance to become ready
 if [ "${instance_created}" = "true" ]; then
   log "Wait for FluxInstance"
-  flux-operator wait instance "${instance_name}" -n "${namespace}" --timeout="${timeout}"
+  flux-operator wait instance "${instance_name}" -n "${namespace}" --timeout="${bootstrap_timeout}"
 else
   log "FluxInstance wait skipped"
 fi
 
+# 9. Debug fault injection (testing only)
 if [ -n "${debug_fault_injection_message}" ]; then
   fail "Fault injection triggered: ${debug_fault_injection_message}"
   exit 1
