@@ -21,3 +21,7 @@ e2e-batch-1:
 .PHONY: e2e-batch-2
 e2e-batch-2:
 	stdbuf -oL -eL bash ./scripts/e2e-batch-2.sh 2>&1 | tee $(E2E_LOG)
+
+.PHONY: e2e-batch-3
+e2e-batch-3:
+	stdbuf -oL -eL bash ./scripts/e2e-batch-3.sh 2>&1 | tee $(E2E_LOG)
