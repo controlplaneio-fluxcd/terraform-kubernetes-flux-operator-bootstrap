@@ -7,14 +7,24 @@ metadata:
     flux-operator-bootstrap/revision: {{ .Values.revision | quote }}
 data:
   flux-instance.yaml: |
-{{ .Values.gitopsResources.fluxInstance | indent 4 }}
-{{- range $key, $value := .Values.gitopsResources.prerequisites }}
+{{ .Values.gitopsResources.instance | indent 4 }}
+{{- range $key, $value := .Values.gitopsResources.prerequisites.manifests }}
   {{ $key }}: |
 {{ $value | indent 4 }}
 {{- end }}
-{{- if .Values.operator.values }}
+{{- if .Values.gitopsResources.operatorChart.values }}
   operator-values.yaml: |
-{{ .Values.operator.values | indent 4 }}
+{{ .Values.gitopsResources.operatorChart.values | indent 4 }}
+{{- end }}
+{{- if .Values.gitopsResources.prerequisites.charts }}
+  prerequisite-charts.json: |
+    {{ .Values.gitopsResources.prerequisites.charts | toJson }}
+{{- range $i, $chart := .Values.gitopsResources.prerequisites.charts }}
+{{- if $chart.values }}
+  chart-values-{{ $i }}.yaml: |
+{{ $chart.values | indent 4 }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if .Values.managedResources.runtimeInfo.data }}
   runtime-info.env: |

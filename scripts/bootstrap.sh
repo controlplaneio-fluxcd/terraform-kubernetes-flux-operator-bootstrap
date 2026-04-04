@@ -10,8 +10,11 @@ export PATH="/busybox:$PATH"
 bootstrap_timeout="${TIMEOUT:-5m}"
 
 # FluxInstance manifest and prerequisite manifests directory (mounted from ConfigMap).
+# bootstrap_mount_dir preserves the original mount path before prerequisites_dir
+# may be redirected to a scratch subdirectory during envsubst (step 1).
 flux_instance_file="${FLUX_INSTANCE_FILE:?FLUX_INSTANCE_FILE is required}"
-prerequisites_dir="${PREREQUISITES_DIR:-/bootstrap}"
+bootstrap_mount_dir="${PREREQUISITES_DIR:-/bootstrap}"
+prerequisites_dir="${bootstrap_mount_dir}"
 
 # Managed secrets YAML file (mounted from Secret, may be empty).
 managed_secrets_file="${SECRETS_FILE:-}"
@@ -22,6 +25,12 @@ runtime_info_file="${RUNTIME_INFO_FILE:-}"
 runtime_info_labels_file="${RUNTIME_INFO_LABELS_FILE:-}"
 runtime_info_annotations_file="${RUNTIME_INFO_ANNOTATIONS_FILE:-}"
 runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-flux-runtime-info}"
+
+# Prerequisite Helm charts JSON manifest (list of {name, repository, version, namespace}).
+prerequisite_charts_file="${PREREQUISITE_CHARTS_FILE:-}"
+
+# OCI registry credentials file (dockerconfigjson format) for pulling Helm charts.
+registry_credentials_file="${REGISTRY_CREDENTIALS_FILE:-}"
 
 # Flux Operator Helm chart settings.
 operator_chart_repository="${OPERATOR_CHART_REPOSITORY:-ghcr.io/controlplaneio-fluxcd/charts/flux-operator}"
@@ -553,7 +562,7 @@ reconcile_managed_resources() {
 }
 
 # ---------------------------------------------------------------------------
-# Flux Operator (Helm install and unlock)
+# Helm chart install (shared by prerequisite charts and Flux Operator)
 # ---------------------------------------------------------------------------
 
 # helm_release_status prints the status of a Helm release (e.g. "deployed",
@@ -561,6 +570,38 @@ reconcile_managed_resources() {
 # $1: release name, $2: namespace. Prints to stdout.
 helm_release_status() {
   helm status "$1" -n "$2" 2>/dev/null | awk '/^STATUS:/{print $2; exit}'
+}
+
+# install_or_upgrade_chart installs or upgrades a Helm chart from an OCI
+# repository. Uses --install so it works for both fresh installs and upgrades.
+# $1: release name, $2: OCI repository, $3: namespace, $4: version (optional),
+# $5: values file path (optional), $6: create namespace ("true"/"false", default "true").
+install_or_upgrade_chart() {
+  chart_release_name="$1"
+  chart_repository="$2"
+  chart_namespace="$3"
+  chart_version="${4:-}"
+  chart_values_file="${5:-}"
+  chart_create_ns="${6:-true}"
+  version_args=""
+  if [ -n "${chart_version}" ]; then
+    version_args="--version=${chart_version}"
+  fi
+  values_args=""
+  if [ -n "${chart_values_file}" ]; then
+    values_args="-f ${chart_values_file}"
+  fi
+  create_ns_args=""
+  if [ "${chart_create_ns}" = "true" ]; then
+    create_ns_args="--create-namespace"
+  fi
+  helm upgrade --install "${chart_release_name}" "oci://${chart_repository}" \
+    --namespace="${chart_namespace}" \
+    ${create_ns_args} \
+    --wait=watcher \
+    --timeout="${bootstrap_timeout}" \
+    ${version_args} \
+    ${values_args}
 }
 
 # install_or_upgrade_flux_operator installs or upgrades the flux-operator Helm
@@ -703,11 +744,133 @@ log "Bootstrap namespace: ${bootstrap_namespace}"
 trap cleanup EXIT
 scratch_dir="$(mktemp -d)"
 
-# 1. Apply prerequisites (create-if-missing)
+# Configure OCI registry authentication for Helm if credentials are provided.
+# The dockerconfigjson file is converted to Helm's registry config format by
+# copying it to the path Helm reads for OCI auth.
+if [ -n "${registry_credentials_file}" ] && [ -f "${registry_credentials_file}" ]; then
+  log "Configure Helm OCI registry credentials"
+  helm_config_dir="$(helm env HELM_REGISTRY_CONFIG)"
+  helm_config_dir="$(dirname "${helm_config_dir}")"
+  mkdir -p "${helm_config_dir}"
+  cp "${registry_credentials_file}" "${helm_config_dir}/config.json"
+fi
+
+# 1. Substitute runtime info variables into input manifests
+if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
+  log "Substitute runtime info variables"
+  # Build "key=value" pairs from the runtime info file into a single string,
+  # then export them in a subshell so flux envsubst can replace ${var} references.
+  # The subshell (sh -c) is needed because this script runs under "set -eu" and
+  # we don't want to pollute its environment.
+  export_args=""
+  while IFS="=" read -r key value; do
+    export_args="${export_args} ${key}=${value}"
+  done < "${runtime_info_file}"
+
+  # Substitute in FluxInstance manifest.
+  sh -c "export${export_args}; flux envsubst --strict" \
+    < "${flux_instance_file}" > "${scratch_dir}/flux-instance.yaml"
+  flux_instance_file="${scratch_dir}/flux-instance.yaml"
+
+  # Substitute in prerequisite manifests. The originals are mounted read-only
+  # from a ConfigMap, so we write substituted copies to a scratch subdirectory
+  # and redirect prerequisites_dir to it.
+  substituted_prereqs_dir="${scratch_dir}/substituted-prerequisites"
+  mkdir -p "${substituted_prereqs_dir}"
+  found_prereqs="false"
+  for prerequisite_file in "${prerequisites_dir}"/prerequisite-*.yaml; do
+    if [ ! -f "${prerequisite_file}" ]; then
+      continue
+    fi
+    found_prereqs="true"
+    sh -c "export${export_args}; flux envsubst --strict" \
+      < "${prerequisite_file}" > "${substituted_prereqs_dir}/$(basename "${prerequisite_file}")"
+  done
+  if [ "${found_prereqs}" = "true" ]; then
+    prerequisites_dir="${substituted_prereqs_dir}"
+  fi
+
+  # Substitute in operator chart values file.
+  if [ -n "${operator_values_file}" ] && [ -f "${operator_values_file}" ]; then
+    sh -c "export${export_args}; flux envsubst --strict" \
+      < "${operator_values_file}" > "${scratch_dir}/operator-values.yaml"
+    operator_values_file="${scratch_dir}/operator-values.yaml"
+  fi
+
+  # Substitute in prerequisite chart values files.
+  if [ -n "${prerequisite_charts_file}" ] && [ -f "${prerequisite_charts_file}" ]; then
+    # The charts file is a JSON array; "yq 'length'" returns the array length.
+    total="$(yq 'length' "${prerequisite_charts_file}")"
+    i=0
+    while [ "$i" -lt "$total" ]; do
+      vf="${bootstrap_mount_dir}/chart-values-${i}.yaml"
+      if [ -f "${vf}" ]; then
+        sh -c "export${export_args}; flux envsubst --strict" \
+          < "${vf}" > "${scratch_dir}/chart-values-${i}.yaml"
+      fi
+      i=$((i + 1))
+    done
+  fi
+fi
+
+# 2. Apply prerequisites (create-if-missing)
 log "Prerequisites"
 apply_prerequisites "${scratch_dir}"
 
-# 2. Ensure target namespace exists
+# 3. Install prerequisite Helm charts
+if [ -n "${prerequisite_charts_file}" ] && [ -f "${prerequisite_charts_file}" ]; then
+  log "Prerequisite charts"
+  # The JSON file contains an array of {name, repository, version, namespace}.
+  # Values files are stored as prerequisite-chart-<index>-values.yaml in the
+  # ConfigMap mount. "yq 'length'" returns the array length.
+  total="$(yq 'length' "${prerequisite_charts_file}")"
+  i=0
+  while [ "$i" -lt "$total" ]; do
+    chart_name="$(yq -r ".[$i].name" "${prerequisite_charts_file}")"
+    chart_repo="$(yq -r ".[$i].repository" "${prerequisite_charts_file}")"
+    chart_version="$(yq -r ".[$i].version // \"\"" "${prerequisite_charts_file}")"
+    chart_namespace="$(yq -r ".[$i].namespace" "${prerequisite_charts_file}")"
+    chart_create_namespace="$(yq -r ".[$i].createNamespace // true" "${prerequisite_charts_file}")"
+
+    # Use the substituted values file from scratch if it exists, otherwise
+    # fall back to the original from the ConfigMap mount.
+    values_file=""
+    if [ -f "${scratch_dir}/chart-values-${i}.yaml" ]; then
+      values_file="${scratch_dir}/chart-values-${i}.yaml"
+    elif [ -f "${bootstrap_mount_dir}/chart-values-${i}.yaml" ]; then
+      values_file="${bootstrap_mount_dir}/chart-values-${i}.yaml"
+    fi
+
+    # Unlock stuck releases, delete failed ones, then install or upgrade.
+    # Unlike the operator (which has a known Deployment name to check for
+    # adoption), prerequisite charts are arbitrary — we can't reliably check
+    # which resource to look for ownership labels on. helm upgrade --install
+    # is idempotent so it's safe to always run.
+    unlock_helm_release "${chart_name}" "${chart_namespace}"
+    chart_status="$(helm_release_status "${chart_name}" "${chart_namespace}")"
+    case "${chart_status}" in
+      "deployed")
+        log "Upgrade chart ${chart_name}"
+        install_or_upgrade_chart "${chart_name}" "${chart_repo}" "${chart_namespace}" "${chart_version}" "${values_file}" "${chart_create_namespace}"
+        ;;
+      "failed")
+        log "Delete failed chart ${chart_name}"
+        helm delete "${chart_name}" -n "${chart_namespace}" --no-hooks >/dev/null
+        log "Install chart ${chart_name}"
+        install_or_upgrade_chart "${chart_name}" "${chart_repo}" "${chart_namespace}" "${chart_version}" "${values_file}" "${chart_create_namespace}"
+        ;;
+      *)
+        log "Install chart ${chart_name}"
+        install_or_upgrade_chart "${chart_name}" "${chart_repo}" "${chart_namespace}" "${chart_version}" "${values_file}" "${chart_create_namespace}"
+        ;;
+    esac
+    i=$((i + 1))
+  done
+else
+  log "No prerequisite charts"
+fi
+
+# 4. Ensure target namespace exists
 if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
   log "Namespace exists: ${namespace}"
 else
@@ -715,27 +878,11 @@ else
   kubectl create namespace "${namespace}" >/dev/null
 fi
 
-# 3. Reconcile managed resources (secrets, runtime info) with SSA
+# 5. Reconcile managed resources (secrets, runtime info) with SSA
 log "Managed resources"
 reconcile_managed_resources "${scratch_dir}"
 
-# 4. Substitute runtime info variables into FluxInstance manifest
-if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
-  log "Substitute runtime info variables in FluxInstance manifest"
-  # Build "key=value" pairs from the runtime info file into a single string,
-  # then export them in a subshell so flux envsubst can replace ${var} references
-  # in the FluxInstance manifest. The subshell (sh -c) is needed because this
-  # script runs under "set -eu" and we don't want to pollute its environment.
-  export_args=""
-  while IFS="=" read -r key value; do
-    export_args="${export_args} ${key}=${value}"
-  done < "${runtime_info_file}"
-  sh -c "export${export_args}; flux envsubst --strict" \
-    < "${flux_instance_file}" > "${scratch_dir}/flux-instance.yaml"
-  flux_instance_file="${scratch_dir}/flux-instance.yaml"
-fi
-
-# 5. Install Flux Operator (or recover from failed/stuck state, or upgrade if
+# 6. Install Flux Operator (or recover from failed/stuck state, or upgrade if
 #    not yet adopted by helm-controller)
 unlock_helm_release "flux-operator" "${namespace}"
 flux_operator_status="$(helm_release_status "flux-operator" "${namespace}")"
@@ -760,11 +907,11 @@ case "${flux_operator_status}" in
     ;;
 esac
 
-# 6. Wait for FluxInstance CRD to be available
+# 7. Wait for FluxInstance CRD to be available
 log "FluxInstance CRD"
 wait_for_flux_instance_crd
 
-# 7. Create FluxInstance (create-if-missing, or re-apply if not yet adopted)
+# 8. Create FluxInstance (create-if-missing, or re-apply if not yet adopted)
 instance_created="false"
 if ! kubectl get fluxinstance.fluxcd.controlplane.io "${instance_name}" -n "${namespace}" >/dev/null 2>&1; then
   log "Create FluxInstance"
@@ -778,7 +925,7 @@ else
   instance_created="true"
 fi
 
-# 8. Wait for FluxInstance to become ready
+# 9. Wait for FluxInstance to become ready
 if [ "${instance_created}" = "true" ]; then
   log "Wait for FluxInstance"
   flux-operator wait instance "${instance_name}" -n "${namespace}" --timeout="${bootstrap_timeout}"
@@ -786,7 +933,7 @@ else
   log "FluxInstance wait skipped"
 fi
 
-# 9. Debug fault injection (testing only)
+# 10. Debug fault injection (testing only)
 if [ -n "${debug_fault_injection_message}" ]; then
   fail "Fault injection triggered: ${debug_fault_injection_message}"
   exit 1

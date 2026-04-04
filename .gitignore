@@ -5,3 +5,4 @@ crash.log
 .terraformrc
 terraform.rc
 *.log
+ghcr.token

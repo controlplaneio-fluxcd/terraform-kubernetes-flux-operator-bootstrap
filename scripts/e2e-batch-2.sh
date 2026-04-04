@@ -47,14 +47,17 @@ assert_no_secret_material_in_state "${failure_tf_dir}"
 
 section "Re-apply Not Yet Adopted"
 note "Simulating stale resources from a previous failed bootstrap by stripping Flux ownership labels"
-# After a successful bootstrap, Flux adopts the FluxInstance and operator
-# Deployment by adding kustomize.toolkit.fluxcd.io/name and
-# helm.toolkit.fluxcd.io/name labels respectively. We strip these to simulate
-# resources left behind by a failed bootstrap that Flux never adopted.
+# After a successful bootstrap, Flux adopts the FluxInstance, operator
+# Deployment, and prerequisites by adding kustomize.toolkit.fluxcd.io/name or
+# helm.toolkit.fluxcd.io/name labels. We strip these to simulate resources left
+# behind by a failed bootstrap that Flux never adopted.
 kubectl --context "kind-${cluster_name}" -n flux-system label fluxinstance flux \
   kustomize.toolkit.fluxcd.io/name- kustomize.toolkit.fluxcd.io/namespace- >/dev/null 2>&1 || true
 kubectl --context "kind-${cluster_name}" -n flux-system label deployment flux-operator \
   helm.toolkit.fluxcd.io/name- helm.toolkit.fluxcd.io/namespace- >/dev/null 2>&1 || true
+# Prerequisites (Namespace and ConfigMap) won't have Flux ownership labels in
+# this test since no Flux Kustomization manages them, so they're already in
+# the "not adopted" state.
 note "Verifying ownership labels were removed"
 fi_label="$(kubectl --context "kind-${cluster_name}" -n flux-system get fluxinstance flux \
   -o jsonpath='{.metadata.labels.kustomize\.toolkit\.fluxcd\.io/name}' 2>/dev/null || true)"
@@ -75,6 +78,18 @@ assert_flux_runtime_ready
 note "Verifying bootstrap logs show re-apply (not skip) for unadopted resources"
 bootstrap_log="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-failure \
   logs job/flux-operator-bootstrap 2>/dev/null || true)"
+if ! printf '%s' "${bootstrap_log}" | grep -q "reapply.*Namespace"; then
+  echo "Bootstrap did not re-apply prerequisite Namespace when not adopted by Flux" >&2
+  echo "Bootstrap log:" >&2
+  printf '%s\n' "${bootstrap_log}" >&2
+  exit 1
+fi
+if ! printf '%s' "${bootstrap_log}" | grep -q "reapply.*ConfigMap"; then
+  echo "Bootstrap did not re-apply prerequisite ConfigMap when not adopted by Flux" >&2
+  echo "Bootstrap log:" >&2
+  printf '%s\n' "${bootstrap_log}" >&2
+  exit 1
+fi
 if ! printf '%s' "${bootstrap_log}" | grep -q "Reapply FluxInstance"; then
   echo "Bootstrap did not re-apply FluxInstance when ownership label was missing" >&2
   echo "Bootstrap log:" >&2

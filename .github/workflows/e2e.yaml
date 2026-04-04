@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        batch: [1, 2, 3]
+        batch: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -69,32 +69,55 @@ jobs:
       - name: Run migration end-to-end test
         run: make docker-build e2e-migration
 
+  e2e-critical-components:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+
+      - name: Set up Kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          install_only: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Run critical components end-to-end test
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
+        run: make docker-build e2e-critical-components
+
   e2e:
     if: always()
-    needs: [e2e-pending, e2e-batch, e2e-migration]
+    needs: [e2e-pending, e2e-batch, e2e-migration, e2e-critical-components]
     runs-on: ubuntu-latest
     steps:
       - name: Update status on PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          batch_result="${{ needs.e2e-batch.result }}"
-          migration_result="${{ needs.e2e-migration.result }}"
-          if [ "$batch_result" = "success" ] && [ "$migration_result" = "success" ]; then
-            state="success"
-            description="End-to-end tests passed"
-          else
-            state="failure"
-            description="End-to-end tests failed"
-          fi
+          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}" "${{ needs.e2e-critical-components.result }}"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+                -f state=failure \
+                -f context="e2e" \
+                -f description="End-to-end tests failed" \
+                -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              exit 1
+            fi
+          done
           gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
-            -f state="${state}" \
+            -f state=success \
             -f context="e2e" \
-            -f description="${description}" \
+            -f description="End-to-end tests passed" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Verify result
         run: |
-          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}"; do
+          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}" "${{ needs.e2e-critical-components.result }}"; do
             [ "$result" = "success" ] || [ "$result" = "skipped" ] || exit 1
           done

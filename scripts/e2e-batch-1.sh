@@ -63,6 +63,14 @@ if [ "${fi_annotation}" != "${cluster_name}" ]; then
   echo "Expected: ${cluster_name}, Got: ${fi_annotation}" >&2
   exit 1
 fi
+note "Verifying prerequisite ConfigMap was substituted with runtime info"
+prereq_cluster="$(kubectl --context "kind-${cluster_name}" -n bootstrap-prereq get configmap/bootstrap-prereq \
+  -o jsonpath='{.data.cluster}')"
+if [ "${prereq_cluster}" != "${cluster_name}" ]; then
+  echo "Prerequisite ConfigMap cluster field was not substituted with runtime info" >&2
+  echo "Expected: ${cluster_name}, Got: ${prereq_cluster}" >&2
+  exit 1
+fi
 initial_managed_secret_uid="$(secret_uid bootstrap-managed)"
 expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/flux-runtime-info' '- Secret/flux-system/bootstrap-managed' '- Secret/flux-system/bootstrap-managed-removed')"
 if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
@@ -251,6 +259,9 @@ operator_values='{
       operator = "Exists"
       effect   = "NoSchedule"
     }]
+    commonAnnotations = {
+      "e2e-cluster-name" = "$${cluster_name}"
+    }
   }'
 render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 5 "" "5m" "${operator_values}"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
@@ -268,6 +279,14 @@ op_toleration_effect="$(kubectl --context "kind-${cluster_name}" -n flux-system 
 if [ "${op_toleration_effect}" != "NoSchedule" ]; then
   echo "flux-operator deployment did not have the expected toleration effect from operator.values" >&2
   echo "Expected: NoSchedule, Got: ${op_toleration_effect}" >&2
+  exit 1
+fi
+note "Verifying operator chart values were substituted with runtime info"
+op_annotation="$(kubectl --context "kind-${cluster_name}" -n flux-system get deployment flux-operator \
+  -o jsonpath='{.metadata.annotations.e2e-cluster-name}')"
+if [ "${op_annotation}" != "${cluster_name}" ]; then
+  echo "flux-operator deployment annotation was not substituted with runtime info" >&2
+  echo "Expected: ${cluster_name}, Got: ${op_annotation}" >&2
   exit 1
 fi
 

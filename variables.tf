@@ -1,8 +1,18 @@
 variable "gitops_resources" {
   description = "Resources that will be reconciled by Flux after bootstrap. These are applied with create-if-missing semantics so that Flux can take ownership of them for steady-state reconciliation."
   type = object({
-    instance_path       = string
-    prerequisites_paths = optional(list(string), [])
+    instance_path = string
+    prerequisites = optional(object({
+      paths = optional(list(string), [])
+      charts = optional(list(object({
+        name             = string
+        repository       = string
+        namespace        = string
+        version          = optional(string)
+        create_namespace = optional(bool, true)
+        values           = optional(any, {})
+      })), [])
+    }), {})
     operator_chart = optional(object({
       repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
       version    = optional(string)
@@ -25,10 +35,10 @@ variable "gitops_resources" {
 
   validation {
     condition = alltrue([
-      for path in var.gitops_resources.prerequisites_paths :
+      for path in var.gitops_resources.prerequisites.paths :
       can(file(abspath(path)))
     ])
-    error_message = "gitops_resources.prerequisites_paths must contain only readable manifest files."
+    error_message = "gitops_resources.prerequisites.paths must contain only readable manifest files."
   }
 }
 
@@ -56,12 +66,16 @@ variable "bootstrap_namespace" {
 
 variable "job" {
   description = "Bootstrap job settings."
+  sensitive   = true
   type = object({
     image = optional(object({
-      repository  = optional(string, "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap")
-      pull_policy = optional(string, "IfNotPresent")
+      repository   = optional(string, "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap")
+      pull_policy  = optional(string, "IfNotPresent")
+      pull_secrets = optional(list(string), [])
     }), {})
-    affinity = optional(any, {
+    service_account_annotations = optional(map(string), {})
+    registry_credentials        = optional(string, "")
+    affinity                    = optional(any, {
       nodeAffinity = {
         requiredDuringSchedulingIgnoredDuringExecution = {
           nodeSelectorTerms = [{
