@@ -1,0 +1,56 @@
+name: debug-ghcr
+
+on:
+  push:
+    branches:
+      - debug-spire
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Helm version
+        run: helm version --short
+
+      - name: Pull spire-crds without auth
+        run: |
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire-crds --version 0.5.0 || echo "FAILED: spire-crds unauthenticated"
+
+      - name: Pull spire without auth
+        run: |
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire --version 0.28.3 || echo "FAILED: spire unauthenticated"
+
+      - name: Pull spire-crds with GITHUB_TOKEN
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u x --password-stdin
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire-crds --version 0.5.0 || echo "FAILED: spire-crds GITHUB_TOKEN"
+
+      - name: Pull spire with GITHUB_TOKEN
+        run: |
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire --version 0.28.3 || echo "FAILED: spire GITHUB_TOKEN"
+
+      - name: Pull spire-crds with GHCR_PAT
+        run: |
+          helm registry logout ghcr.io || true
+          echo "${{ secrets.GHCR_PAT }}" | helm registry login ghcr.io -u x --password-stdin
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire-crds --version 0.5.0 || echo "FAILED: spire-crds GHCR_PAT"
+
+      - name: Pull spire with GHCR_PAT
+        run: |
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire --version 0.28.3 || echo "FAILED: spire GHCR_PAT"
+
+      - name: Pull spire-crds with AUTO_GHCR_PAT
+        run: |
+          helm registry logout ghcr.io || true
+          echo "${{ secrets.AUTO_GHCR_PAT }}" | helm registry login ghcr.io -u x --password-stdin
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire-crds --version 0.5.0 || echo "FAILED: spire-crds AUTO_GHCR_PAT"
+
+      - name: Pull spire with AUTO_GHCR_PAT
+        run: |
+          helm pull oci://ghcr.io/spiffe/helm-charts/spire --version 0.28.3 || echo "FAILED: spire AUTO_GHCR_PAT"
+
+      - name: Template spire-crds with GITHUB_TOKEN
+        run: |
+          helm registry logout ghcr.io || true
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u x --password-stdin
+          helm template test oci://ghcr.io/spiffe/helm-charts/spire-crds --version 0.5.0 > /dev/null || echo "FAILED: spire-crds template GITHUB_TOKEN"
