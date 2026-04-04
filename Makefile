@@ -26,6 +26,14 @@ e2e-batch-2:
 e2e-batch-3:
 	stdbuf -oL -eL bash ./scripts/e2e-batch-3.sh 2>&1 | tee $(E2E_LOG)
 
+.PHONY: e2e-batch-4
+e2e-batch-4:
+	stdbuf -oL -eL bash ./scripts/e2e-batch-4.sh 2>&1 | tee $(E2E_LOG)
+
 .PHONY: e2e-migration
 e2e-migration:
 	stdbuf -oL -eL bash ./scripts/e2e-migration.sh 2>&1 | tee $(E2E_LOG)
+
+.PHONY: e2e-critical-components
+e2e-critical-components:
+	stdbuf -oL -eL bash ./scripts/e2e-critical-components.sh 2>&1 | tee $(E2E_LOG)

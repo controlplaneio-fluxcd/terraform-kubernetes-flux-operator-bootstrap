@@ -21,6 +21,10 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
 {{- end }}
+{{- with .Values.job.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
       containers:
       - name: bootstrap
         image: "{{ .Values.job.image.repository }}:{{ include "flux-operator-bootstrap.job-image-tag" . }}"
@@ -41,17 +45,25 @@ spec:
         - name: CONFIG_MAP_NAME
           value: {{ .Release.Name }}
         - name: OPERATOR_CHART_REPOSITORY
-          value: {{ .Values.operator.repository | quote }}
+          value: {{ .Values.gitopsResources.operatorChart.repository | quote }}
         - name: OPERATOR_CHART_VERSION
-          value: {{ .Values.operator.version | quote }}
-{{- if .Values.operator.values }}
+          value: {{ .Values.gitopsResources.operatorChart.version | quote }}
+{{- if .Values.gitopsResources.operatorChart.values }}
         - name: OPERATOR_VALUES_FILE
           value: /bootstrap/operator-values.yaml
+{{- end }}
+{{- if .Values.gitopsResources.prerequisites.charts }}
+        - name: PREREQUISITE_CHARTS_FILE
+          value: /bootstrap/prerequisite-charts.json
 {{- end }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}
         - name: DEBUG_FLUX_OPERATOR_IMAGE_TAG
           value: {{ .Values.debugFluxOperatorImageTag | quote }}
+{{- if .Values.job.hasRegistryCredentials }}
+        - name: REGISTRY_CREDENTIALS_FILE
+          value: /registry-credentials/.dockerconfigjson
+{{- end }}
 {{- if .Values.managedResources.hasSecrets }}
         - name: SECRETS_FILE
           value: /bootstrap-secrets/secrets.yaml
@@ -70,6 +82,11 @@ spec:
         - name: bootstrap-manifest
           mountPath: /bootstrap
           readOnly: true
+{{- if .Values.job.hasRegistryCredentials }}
+        - name: registry-credentials
+          mountPath: /registry-credentials
+          readOnly: true
+{{- end }}
 {{- if .Values.managedResources.hasSecrets }}
         - name: bootstrap-secrets
           mountPath: /bootstrap-secrets
@@ -79,6 +96,11 @@ spec:
       - name: bootstrap-manifest
         configMap:
           name: {{ .Release.Name }}
+{{- if .Values.job.hasRegistryCredentials }}
+      - name: registry-credentials
+        secret:
+          secretName: {{ .Release.Name }}-registry
+{{- end }}
 {{- if .Values.managedResources.hasSecrets }}
       - name: bootstrap-secrets
         secret:

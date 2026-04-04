@@ -2,13 +2,15 @@ locals {
   flux_instance_yaml = file(abspath(var.gitops_resources.instance_path))
   flux_instance      = yamldecode(local.flux_instance_yaml)
   has_secrets_yaml   = trimspace(var.managed_resources.secrets_yaml) != ""
-  prerequisite_files = { for idx, path in var.gitops_resources.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
+  prerequisite_files = { for idx, path in var.gitops_resources.prerequisites.paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
   timeout_value      = tonumber(trimsuffix(trimsuffix(trimsuffix(var.timeout, "s"), "m"), "h"))
   timeout_unit       = substr(var.timeout, length(var.timeout) - 1, 1)
   timeout_seconds = local.timeout_unit == "s" ? local.timeout_value : (
     local.timeout_unit == "m" ? local.timeout_value * 60 : local.timeout_value * 3600
   )
-  secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.managed_resources.secrets_yaml), 0, 12), 16) : 0
+  secrets_yaml_revision      = local.has_secrets_yaml ? parseint(substr(sha256(var.managed_resources.secrets_yaml), 0, 12), 16) : 0
+  has_registry_credentials   = trimspace(var.job.registry_credentials) != ""
+  registry_credentials_hash  = local.has_registry_credentials ? sha256(var.job.registry_credentials) : ""
 }
 
 resource "kubernetes_namespace_v1" "this" {
@@ -36,8 +38,25 @@ resource "kubernetes_secret_v1" "this" {
   data_wo_revision = local.secrets_yaml_revision
 }
 
+resource "kubernetes_secret_v1" "registry_credentials" {
+  count = local.has_registry_credentials ? 1 : 0
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  metadata {
+    name      = "flux-operator-bootstrap-registry"
+    namespace = var.bootstrap_namespace
+  }
+
+  type = "kubernetes.io/dockerconfigjson"
+
+  data = {
+    ".dockerconfigjson" = var.job.registry_credentials
+  }
+}
+
 resource "helm_release" "this" {
-  depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this]
+  depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this, kubernetes_secret_v1.registry_credentials]
 
   name             = "flux-operator-bootstrap"
   namespace        = var.bootstrap_namespace
@@ -54,18 +73,32 @@ resource "helm_release" "this" {
       image = {
         repository = var.job.image.repository
         pullPolicy = var.job.image.pull_policy
+        pullSecrets = [for name in var.job.image.pull_secrets : { name = name }]
       }
-      affinity    = var.job.affinity
-      tolerations = var.job.tolerations
-    }
-    operator = {
-      repository = var.gitops_resources.operator_chart.repository
-      version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
-      values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
+      serviceAccountAnnotations = var.job.service_account_annotations
+      hasRegistryCredentials     = local.has_registry_credentials
+      registryCredentialsHash    = local.registry_credentials_hash
+      affinity                   = var.job.affinity
+      tolerations                = var.job.tolerations
     }
     gitopsResources = {
-      fluxInstance  = local.flux_instance_yaml
-      prerequisites = local.prerequisite_files
+      instance = local.flux_instance_yaml
+      prerequisites = {
+        manifests = local.prerequisite_files
+        charts = [for chart in var.gitops_resources.prerequisites.charts : {
+        name             = chart.name
+        repository       = chart.repository
+        version          = chart.version != null ? chart.version : ""
+        namespace        = chart.namespace
+        createNamespace  = chart.create_namespace
+          values         = length(chart.values) > 0 ? yamlencode(chart.values) : ""
+        }]
+      }
+      operatorChart = {
+        repository = var.gitops_resources.operator_chart.repository
+        version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
+        values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
+      }
     }
     managedResources = {
       hasSecrets  = local.has_secrets_yaml
