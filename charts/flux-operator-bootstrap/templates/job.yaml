@@ -13,6 +13,10 @@ spec:
     spec:
       serviceAccountName: {{ .Release.Name }}
       restartPolicy: Never
+{{- if .Values.job.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: Default
+{{- end }}
 {{- with .Values.job.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
@@ -41,12 +45,16 @@ spec:
         - name: CONFIG_MAP_NAME
           value: {{ .Release.Name }}
         - name: OPERATOR_CHART_REPOSITORY
-          value: {{ .Values.operator.repository | quote }}
+          value: {{ .Values.gitopsResources.operatorChart.repository | quote }}
         - name: OPERATOR_CHART_VERSION
-          value: {{ .Values.operator.version | quote }}
-{{- if .Values.operator.values }}
+          value: {{ .Values.gitopsResources.operatorChart.version | quote }}
+{{- if .Values.gitopsResources.operatorChart.values }}
         - name: OPERATOR_VALUES_FILE
           value: /bootstrap/operator-values.yaml
+{{- end }}
+{{- if .Values.gitopsResources.prerequisites.charts }}
+        - name: PREREQUISITE_CHARTS_FILE
+          value: /bootstrap/prerequisite-charts.json
 {{- end }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}

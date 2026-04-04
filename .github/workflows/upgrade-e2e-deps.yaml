@@ -1,0 +1,93 @@
+name: upgrade-e2e-deps
+
+on:
+  schedule:
+    - cron: '0 8 * * 1' # Every Monday at 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Discover latest versions
+        id: versions
+        run: |
+          latest_podinfo="$(helm show chart oci://ghcr.io/stefanprodan/charts/podinfo 2>/dev/null | awk '/^version:/{print $2; exit}')"
+          latest_cilium="$(helm show chart oci://quay.io/cilium/charts/cilium 2>/dev/null | awk '/^version:/{print $2; exit}')"
+          latest_spire_crds="$(helm show chart oci://ghcr.io/spiffe/helm-charts/spire-crds 2>/dev/null | awk '/^version:/{print $2; exit}')"
+          latest_spire="$(helm show chart oci://ghcr.io/spiffe/helm-charts/spire 2>/dev/null | awk '/^version:/{print $2; exit}')"
+
+          echo "podinfo=${latest_podinfo}" >> "${GITHUB_OUTPUT}"
+          echo "cilium=${latest_cilium}" >> "${GITHUB_OUTPUT}"
+          echo "spire_crds=${latest_spire_crds}" >> "${GITHUB_OUTPUT}"
+          echo "spire=${latest_spire}" >> "${GITHUB_OUTPUT}"
+
+          current_podinfo="$(grep 'e2e_podinfo_version=' scripts/e2e-helpers.sh | cut -d'"' -f2)"
+          current_cilium="$(grep 'e2e_cilium_version=' scripts/e2e-helpers.sh | cut -d'"' -f2)"
+          current_spire_crds="$(grep 'e2e_spire_crds_version=' scripts/e2e-helpers.sh | cut -d'"' -f2)"
+          current_spire="$(grep 'e2e_spire_version=' scripts/e2e-helpers.sh | cut -d'"' -f2)"
+
+          changes=""
+          if [ "${current_podinfo}" != "${latest_podinfo}" ]; then
+            changes="${changes}- podinfo: ${current_podinfo} → ${latest_podinfo}\n"
+          fi
+          if [ "${current_cilium}" != "${latest_cilium}" ]; then
+            changes="${changes}- cilium: ${current_cilium} → ${latest_cilium}\n"
+          fi
+          if [ "${current_spire_crds}" != "${latest_spire_crds}" ]; then
+            changes="${changes}- spire-crds: ${current_spire_crds} → ${latest_spire_crds}\n"
+          fi
+          if [ "${current_spire}" != "${latest_spire}" ]; then
+            changes="${changes}- spire: ${current_spire} → ${latest_spire}\n"
+          fi
+
+          if [ -z "${changes}" ]; then
+            echo "up_to_date=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "up_to_date=false" >> "${GITHUB_OUTPUT}"
+            # Use a delimiter for multiline output.
+            {
+              echo "changes<<EOF"
+              printf '%b' "${changes}"
+              echo "EOF"
+            } >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Upgrade versions
+        if: steps.versions.outputs.up_to_date == 'false'
+        run: |
+          sed -i 's/e2e_podinfo_version="[^"]*"/e2e_podinfo_version="${{ steps.versions.outputs.podinfo }}"/' scripts/e2e-helpers.sh
+          sed -i 's/e2e_cilium_version="[^"]*"/e2e_cilium_version="${{ steps.versions.outputs.cilium }}"/' scripts/e2e-helpers.sh
+          sed -i 's/e2e_spire_crds_version="[^"]*"/e2e_spire_crds_version="${{ steps.versions.outputs.spire_crds }}"/' scripts/e2e-helpers.sh
+          sed -i 's/e2e_spire_version="[^"]*"/e2e_spire_version="${{ steps.versions.outputs.spire }}"/' scripts/e2e-helpers.sh
+
+      - name: Create pull request
+        if: steps.versions.outputs.up_to_date == 'false'
+        id: create-pr
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
+        with:
+          branch: upgrade-e2e-deps
+          commit-message: Upgrade e2e dependency versions
+          title: Upgrade e2e dependency versions
+          delete-branch: true
+          body: |
+            Upgrades third-party Helm chart versions used in e2e tests.
+
+            ${{ steps.versions.outputs.changes }}
+
+      - name: Trigger e2e for PR branch
+        if: steps.create-pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run e2e.yaml --ref upgrade-e2e-deps

@@ -9,6 +9,12 @@ image_tag="dev"
 image="${image_repository}:${image_tag}"
 inventory_config_map_name="inventory"
 
+# Versions of third-party charts used across e2e tests.
+e2e_podinfo_version="6.7.0"
+e2e_cilium_version="1.19.1"
+e2e_spire_crds_version="0.5.0"
+e2e_spire_version="0.28.3"
+
 _start_time="${EPOCHREALTIME/./}"
 _last_section_time="${_start_time}"
 
@@ -167,6 +173,7 @@ render_root_module() {
   job_scheduling="${7:-}"
   timeout="${8:-5m}"
   operator_values="${9:-}"
+  prerequisite_charts="${10:-}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -231,6 +238,7 @@ metadata:
   namespace: bootstrap-prereq
 data:
   value: initial
+  cluster: ${cluster_name}
 EOF
 
   cat > "${flux_instance_dir}/flux-instance.yaml" <<'EOF'
@@ -339,10 +347,17 @@ fi)
 
   gitops_resources = {
     instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
-    prerequisites_paths = [
-      "\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml",
-      "\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml",
-    ]
+    prerequisites = {
+      paths = [
+        "\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml",
+        "\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml",
+      ]
+$(if [ -n "${prerequisite_charts}" ]; then
+cat <<PCHEOF
+      charts = ${prerequisite_charts}
+PCHEOF
+fi)
+    }
 $(if [ -n "${operator_values}" ]; then
 cat <<OPEOF
     operator_chart = {

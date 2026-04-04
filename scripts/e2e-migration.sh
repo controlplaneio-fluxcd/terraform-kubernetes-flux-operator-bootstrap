@@ -168,7 +168,7 @@ kubectl --context "${kctx}" create namespace podinfo
 flux create source oci podinfo \
   --context "${kctx}" \
   --url=oci://ghcr.io/stefanprodan/manifests/podinfo \
-  --tag=6.7.0 \
+  --tag="${e2e_podinfo_version}" \
   --interval=10m
 flux create kustomization podinfo \
   --context "${kctx}" \
