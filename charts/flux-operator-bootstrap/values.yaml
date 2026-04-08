@@ -5,15 +5,17 @@ job:
     pullPolicy: IfNotPresent
   affinity: {}
   tolerations: []
-
-operator:
-  repository: ghcr.io/controlplaneio-fluxcd/charts/flux-operator
-  version: ""
-  values: ""
+  hostNetwork: false
 
 gitopsResources:
-  fluxInstance: ""
-  prerequisites: {}
+  instance: ""
+  prerequisites:
+    manifests: {}
+    charts: []
+  operatorChart:
+    repository: ghcr.io/controlplaneio-fluxcd/charts/flux-operator
+    version: ""
+    values: ""
 
 managedResources:
   hasSecrets: false

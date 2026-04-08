@@ -2,7 +2,7 @@ locals {
   flux_instance_yaml = file(abspath(var.gitops_resources.instance_path))
   flux_instance      = yamldecode(local.flux_instance_yaml)
   has_secrets_yaml   = trimspace(var.managed_resources.secrets_yaml) != ""
-  prerequisite_files = { for idx, path in var.gitops_resources.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
+  prerequisite_files = { for idx, path in var.gitops_resources.prerequisites.paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
   timeout_value      = tonumber(trimsuffix(trimsuffix(trimsuffix(var.timeout, "s"), "m"), "h"))
   timeout_unit       = substr(var.timeout, length(var.timeout) - 1, 1)
   timeout_seconds = local.timeout_unit == "s" ? local.timeout_value : (
@@ -57,15 +57,31 @@ resource "helm_release" "this" {
       }
       affinity    = var.job.affinity
       tolerations = var.job.tolerations
-    }
-    operator = {
-      repository = var.gitops_resources.operator_chart.repository
-      version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
-      values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
+      hostNetwork = var.job.host_network
     }
     gitopsResources = {
-      fluxInstance  = local.flux_instance_yaml
-      prerequisites = local.prerequisite_files
+      instance = local.flux_instance_yaml
+      prerequisites = {
+        manifests = local.prerequisite_files
+        charts = [for chart in var.gitops_resources.prerequisites.charts : {
+          name            = chart.name
+          repository      = chart.repository
+          version         = chart.version != null ? chart.version : ""
+          namespace       = chart.namespace
+          createNamespace = chart.create_namespace
+          values          = chart.values_yaml
+          fluxAdoptionCheck = chart.flux_adoption_check != null ? {
+            kind      = chart.flux_adoption_check.kind
+            name      = chart.flux_adoption_check.name
+            namespace = chart.flux_adoption_check.namespace
+          } : null
+        }]
+      }
+      operatorChart = {
+        repository = var.gitops_resources.operator_chart.repository
+        version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
+        values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
+      }
     }
     managedResources = {
       hasSecrets  = local.has_secrets_yaml

@@ -15,20 +15,32 @@ over steady-state reconciliation.
 - Terraform manages the bootstrap mechanism
 - Flux and Flux Operator manage the steady-state GitOps resources afterwards
 
+Migrating from the [fluxcd/flux](https://registry.terraform.io/providers/fluxcd/flux/latest)
+Terraform provider? See the
+[migration guide](https://github.com/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap/blob/main/docs/migration-from-flux-provider.md).
+
 ## Overview
 
 The module creates a dedicated bootstrap namespace with a `Job` that:
 
-- applies prerequisite manifests with create-if-missing semantics
+- if `runtime_info` is provided, substitutes `${variable}` references in all
+  input manifests (FluxInstance, prerequisites, operator chart values,
+  prerequisite chart values) using `flux envsubst`
+- applies prerequisite manifests with create-if-missing semantics;
+  re-applies if not yet adopted by Flux
+- installs prerequisite Helm charts (in list order, after prerequisite
+  manifests) if configured; without `flux_adoption_check`, uses
+  create-if-missing semantics; with `flux_adoption_check`, uses the full
+  unlock/recover/upgrade flow (same as the Flux Operator chart) and skips
+  charts already adopted by Flux
 - creates the `FluxInstance` target namespace if missing
 - reconciles managed resources (secrets and runtime-info `ConfigMap`) into the
   target namespace with server-side apply, correcting drift from manual changes;
   tracks them in an inventory and garbage-collects removed entries
-- if `runtime_info` is provided, substitutes `${variable}` references in the
-  `FluxInstance` manifest using `flux envsubst`
-- installs Flux Operator if missing, recovering automatically from failed
-  or stuck previous attempts
-- applies the `FluxInstance` manifest with create-if-missing semantics
+- installs Flux Operator if missing; recovers automatically from failed or
+  stuck (pending) Helm releases; upgrades if not yet adopted by Flux
+- applies the `FluxInstance` manifest with create-if-missing semantics;
+  re-applies if not yet adopted by Flux
 - waits for the `FluxInstance` to become ready
 - cleans up bootstrap transport resources after completion
 
@@ -49,7 +61,7 @@ are reconciled on every bootstrap run. `managed_resources.secrets_yaml` is
 reconciled into the target namespace with server-side apply.
 `managed_resources.runtime_info` is applied as a `ConfigMap` named
 `flux-runtime-info` in the target namespace and its data values are substituted
-into the `FluxInstance` manifest before the initial apply. For steady-state
+into all input manifests before applying them. For steady-state
 variable substitution, use `.spec.kustomize.patches` in the `FluxInstance` to
 patch the generated Flux `Kustomization` (from `.spec.sync`) with
 `.spec.postBuild.substituteFrom` referencing the same `ConfigMap`.
@@ -93,10 +105,12 @@ module "flux_operator_bootstrap" {
   revision = var.bootstrap_revision
 
   gitops_resources = {
-    instance_path       = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
-    prerequisites_paths = [
-      "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
-    ]
+    instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
+    prerequisites = {
+      paths = [
+        "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
+      ]
+    }
   }
 
   managed_resources = {
@@ -128,10 +142,11 @@ When `managed_resources.runtime_info` is set, the bootstrap job:
 
 1. Creates a `ConfigMap` named `flux-runtime-info` in the `FluxInstance` target
    namespace with the provided data, labels, and annotations
-2. Substitutes `${variable}` references in the `FluxInstance` manifest using
-   `flux envsubst --strict` before the initial apply
+2. Substitutes `${variable}` references in all input manifests (FluxInstance,
+   prerequisites, operator chart values, prerequisite chart values) using
+   `flux envsubst --strict` before applying them
 
-This allows the `FluxInstance` manifest to use variable references like
+This allows input manifests to use variable references like
 `${cluster_name}` that are resolved at bootstrap time. For steady-state
 reconciliation, use `.spec.kustomize.patches` in the `FluxInstance` to
 patch the generated Flux `Kustomization` (from `.spec.sync`) with
@@ -215,7 +230,7 @@ gitops_resources = {
 
 If the cluster uses dedicated nodes with taints (e.g. provisioned by Karpenter
 `NodePool`s), the node pool manifests can be deployed as prerequisites via
-`gitops_resources.prerequisites_paths` so the target nodes are available before
+`gitops_resources.prerequisites.paths` so the target nodes are available before
 the bootstrap job runs.
 
 Affinity and tolerations can then be configured at each layer:
@@ -402,19 +417,66 @@ Note that Terraform's `merge()` is shallow — it replaces top-level keys, not
 nested ones. This works here because the entire `web` key is being overridden
 with a single `enabled = false`, so no other values under `web` are needed.
 
+### Managed secrets from an external secrets store
+
+Secret values can be pulled from any external store (AWS Secrets Manager, GCP
+Secret Manager, Azure Key Vault, HashiCorp Vault, etc.) using Terraform `data`
+sources and composed into the `managed_resources.secrets_yaml` YAML string, the same
+way the usage example above builds a dockerconfig secret from Terraform
+variables.
+
+**No secret material is stored in the Terraform state.** The module marks
+`managed_resources` as `sensitive` and only persists a SHA-256 hash of the
+content to detect changes — the actual YAML never appears in the state file.
+This is verified by end-to-end tests.
+
+```hcl
+data "aws_secretsmanager_secret_version" "git_credentials" {
+  secret_id = "flux/staging/git-credentials"
+}
+
+module "flux_operator_bootstrap" {
+  # ...
+
+  managed_resources = {
+    secrets_yaml = <<-YAML
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: git-credentials
+      type: Opaque
+      stringData:
+        password: '${data.aws_secretsmanager_secret_version.git_credentials.secret_string}'
+    YAML
+  }
+}
+```
+
 ## Inputs
 
 - `revision` (`Required`): revision number for manually triggering a bootstrap re-run; the bootstrap job also runs automatically when any input content changes (secrets, runtime info, gitops resources); bump revision to force a re-run without changing content; when all inputs are unchanged, `terraform plan` shows zero diff
 - `gitops_resources` (`Required`): resources applied with create-if-missing semantics, meant to be reconciled by Flux after bootstrap
-  - `gitops_resources.instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references that are substituted using `runtime_info` values
-  - `gitops_resources.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files
   - `gitops_resources.operator_chart` (`Default: {}`): Flux Operator Helm chart settings
   - `gitops_resources.operator_chart.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
   - `gitops_resources.operator_chart.version` (`Optional`): Helm chart version constraint
-  - `gitops_resources.operator_chart.values` (`Default: {}`): Helm chart values object passed to the operator install; use this to customize the operator deployment (e.g. image overrides, node affinity, tolerations, resource limits)
+  - `gitops_resources.operator_chart.values` (`Default: {}`): Helm chart values object passed to the operator install; use this to customize the operator deployment (e.g. image overrides, node affinity, tolerations, resource limits); may contain `${variable}` references substituted using `runtime_info` values
+  - `gitops_resources.instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references substituted using `runtime_info` values
+  - `gitops_resources.prerequisites` (`Default: {}`): prerequisite resource settings
+  - `gitops_resources.prerequisites.paths` (`Default: []`): ordered list of paths to prerequisite manifest files; may contain `${variable}` references substituted using `runtime_info` values
+  - `gitops_resources.prerequisites.charts` (`Default: []`): list of Helm charts to install before Flux; useful for components that must exist before Flux can bootstrap (e.g. CSI drivers, CNI plugins)
+  - `gitops_resources.prerequisites.charts[].name` (`Required`): Helm release name
+  - `gitops_resources.prerequisites.charts[].repository` (`Required`): OCI Helm chart repository (without the `oci://` prefix)
+  - `gitops_resources.prerequisites.charts[].namespace` (`Required`): namespace to install the chart into
+  - `gitops_resources.prerequisites.charts[].version` (`Optional`): Helm chart version constraint
+  - `gitops_resources.prerequisites.charts[].create_namespace` (`Default: true`): create the namespace if it doesn't exist
+  - `gitops_resources.prerequisites.charts[].values_yaml` (`Default: ""`): Helm chart values as a YAML string (use `yamlencode({...})`); may contain `${variable}` references substituted using `runtime_info` values
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check` (`Optional`): when set, the bootstrap job checks the specified resource for Flux ownership labels before touching the release; if adopted, the chart is skipped entirely; if not adopted, the full unlock/recover/upgrade flow is used (like the Flux Operator chart); without this field, charts use create-if-missing semantics
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check.kind` (`Required`): Kubernetes resource kind to check (e.g. `deployment`)
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check.name` (`Required`): resource name to check
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check.namespace` (`Required`): resource namespace to check
 - `managed_resources` (`Default: {}`): resources reconciled by the bootstrap job on every run
   - `managed_resources.secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the `FluxInstance` namespace
-  - `managed_resources.runtime_info` (`Optional`): when set, creates a `ConfigMap` named `flux-runtime-info` in the target namespace; its data values are substituted into the `FluxInstance` manifest via `flux envsubst`; tracked in inventory and garbage-collected when removed
+  - `managed_resources.runtime_info` (`Optional`): when set, creates a `ConfigMap` named `flux-runtime-info` in the target namespace; its data values are substituted into all input manifests via `flux envsubst`; tracked in inventory and garbage-collected when removed
   - `managed_resources.runtime_info.data` (`Required`): key-value pairs for the ConfigMap data
   - `managed_resources.runtime_info.labels` (`Default: {}`): labels to set on the ConfigMap
   - `managed_resources.runtime_info.annotations` (`Default: {}`): annotations to set on the ConfigMap
@@ -424,6 +486,7 @@ with a single `enabled = false`, so no other values under `web` are needed.
   - `job.image.pull_policy` (`Default: "IfNotPresent"`): image pull policy
   - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
+  - `job.host_network` (`Default: false`): run the bootstrap job with host networking; required when the job must install a CNI plugin (e.g. Cilium) since pod networking is unavailable until the CNI is running
 - `timeout` (`Default: "5m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources
