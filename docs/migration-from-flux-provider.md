@@ -97,7 +97,7 @@ previously managed by the provider. Adjust `url`, `ref`, `path`, and
 ```hcl
 module "flux_operator_bootstrap" {
   source  = "controlplaneio-fluxcd/flux-operator-bootstrap/kubernetes"
-  version = "0.0.3"
+  version = "0.0.4"
 
   revision = 1
 
@@ -142,7 +142,7 @@ reconciles into the `FluxInstance` namespace on every apply:
 ```hcl
 module "flux_operator_bootstrap" {
   source  = "controlplaneio-fluxcd/flux-operator-bootstrap/kubernetes"
-  version = "0.0.3"
+  version = "0.0.4"
 
   revision = 1
 
