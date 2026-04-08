@@ -1,5 +1,5 @@
-FROM ghcr.io/fluxcd/flux-cli:v2.8.3@sha256:1fe5c39881c0c1f857f0462f0692e365bea768228b33d31c209610f389775eb6 AS flux-cli
-FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.45.1@sha256:cf844df62557316644f07851ac3fae4aa00daaad3a018b53bd5add95bcfda907 AS flux-operator-cli
+FROM ghcr.io/fluxcd/flux-cli:v2.8.5@sha256:f1947272d998247ce959adf8ffe13626f153e8b373ccd0322a18b4f7aad132f1 AS flux-cli
+FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.46.0@sha256:359ba1c3005d6f564dcf7af35907325f68476ee20395c9aa38477025db94c92e AS flux-operator-cli
 FROM mikefarah/yq:4@sha256:603ebff15eb308a05f1c5b8b7613179cad859aed3ec9fdd04f2ef5d32345950e AS yq
 FROM alpine/helm:4.1.3@sha256:a572075a78666ad6fb1f40cb477a9e2eabbc46f3739beeb81904a6121f6ef027 AS helm
 FROM registry.k8s.io/kubectl:v1.35.3@sha256:8dad99b604a2c0bafe17f53cadf78482d6f667a6da687f385508f5f4e4696d37 AS kubectl
