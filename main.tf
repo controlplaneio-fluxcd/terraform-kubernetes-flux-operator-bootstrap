@@ -1,5 +1,5 @@
 locals {
-  flux_instance_yaml = file(abspath(var.gitops_resources.flux_instance_path))
+  flux_instance_yaml = file(abspath(var.gitops_resources.instance_path))
   flux_instance      = yamldecode(local.flux_instance_yaml)
   has_secrets_yaml   = trimspace(var.managed_resources.secrets_yaml) != ""
   prerequisite_files = { for idx, path in var.gitops_resources.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
@@ -59,9 +59,9 @@ resource "helm_release" "this" {
       tolerations = var.job.tolerations
     }
     operator = {
-      repository = var.operator.repository
-      version    = var.operator.version != null ? var.operator.version : ""
-      values     = length(var.operator.values) > 0 ? yamlencode(var.operator.values) : ""
+      repository = var.gitops_resources.operator_chart.repository
+      version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
+      values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
     }
     gitopsResources = {
       fluxInstance  = local.flux_instance_yaml

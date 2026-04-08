@@ -332,25 +332,24 @@ JOBEOF
 fi)
   }
 
-$(if [ -n "${operator_values}" ]; then
-cat <<OPEOF
-  operator = {
-    values = ${operator_values}
-  }
-OPEOF
-fi)
-
   timeout = "${timeout}"
 
   debug_fault_injection_message  = "${fault_injection_message}"
   debug_flux_operator_image_tag = "${flux_operator_image_tag}"
 
   gitops_resources = {
-    flux_instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
+    instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
     prerequisites_paths = [
       "\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml",
       "\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml",
     ]
+$(if [ -n "${operator_values}" ]; then
+cat <<OPEOF
+    operator_chart = {
+      values = ${operator_values}
+    }
+OPEOF
+fi)
   }
 
   managed_resources = {

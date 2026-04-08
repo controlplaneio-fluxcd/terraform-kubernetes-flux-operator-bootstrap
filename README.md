@@ -93,7 +93,7 @@ module "flux_operator_bootstrap" {
   revision = var.bootstrap_revision
 
   gitops_resources = {
-    flux_instance_path  = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
+    instance_path       = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
     prerequisites_paths = [
       "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
     ]
@@ -207,7 +207,7 @@ repo/
 
 ```hcl
 gitops_resources = {
-  flux_instance_path = "${path.root}/../../clusters/staging/flux-system/flux-instance.yaml"
+  instance_path = "${path.root}/../../clusters/staging/flux-system/flux-instance.yaml"
 }
 ```
 
@@ -236,19 +236,23 @@ module "flux_operator_bootstrap" {
 }
 ```
 
-**Flux Operator** — uses `operator.values` to pass Helm chart values:
+**Flux Operator** — uses `gitops_resources.operator_chart.values` to pass Helm
+chart values:
 
 ```hcl
 module "flux_operator_bootstrap" {
   # ...
 
-  operator = {
-    values = {
-      tolerations = [{
-        key      = "node-role.kubernetes.io/control-plane"
-        operator = "Exists"
-        effect   = "NoSchedule"
-      }]
+  gitops_resources = {
+    # ...
+    operator_chart = {
+      values = {
+        tolerations = [{
+          key      = "node-role.kubernetes.io/control-plane"
+          operator = "Exists"
+          effect   = "NoSchedule"
+        }]
+      }
     }
   }
 }
@@ -382,11 +386,14 @@ while the GitOps reconciliation enables it afterwards:
 module "flux_operator_bootstrap" {
   # ...
 
-  operator = {
-    values = merge(
-      yamldecode(file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")),
-      { web = { enabled = false } },
-    )
+  gitops_resources = {
+    # ...
+    operator_chart = {
+      values = merge(
+        yamldecode(file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")),
+        { web = { enabled = false } },
+      )
+    }
   }
 }
 ```
@@ -399,8 +406,12 @@ with a single `enabled = false`, so no other values under `web` are needed.
 
 - `revision` (`Required`): revision number for manually triggering a bootstrap re-run; the bootstrap job also runs automatically when any input content changes (secrets, runtime info, gitops resources); bump revision to force a re-run without changing content; when all inputs are unchanged, `terraform plan` shows zero diff
 - `gitops_resources` (`Required`): resources applied with create-if-missing semantics, meant to be reconciled by Flux after bootstrap
-  - `gitops_resources.flux_instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references that are substituted using `runtime_info` values
+  - `gitops_resources.instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references that are substituted using `runtime_info` values
   - `gitops_resources.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files
+  - `gitops_resources.operator_chart` (`Default: {}`): Flux Operator Helm chart settings
+  - `gitops_resources.operator_chart.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
+  - `gitops_resources.operator_chart.version` (`Optional`): Helm chart version constraint
+  - `gitops_resources.operator_chart.values` (`Default: {}`): Helm chart values object passed to the operator install; use this to customize the operator deployment (e.g. image overrides, node affinity, tolerations, resource limits)
 - `managed_resources` (`Default: {}`): resources reconciled by the bootstrap job on every run
   - `managed_resources.secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the `FluxInstance` namespace
   - `managed_resources.runtime_info` (`Optional`): when set, creates a `ConfigMap` named `flux-runtime-info` in the target namespace; its data values are substituted into the `FluxInstance` manifest via `flux envsubst`; tracked in inventory and garbage-collected when removed
@@ -413,10 +424,6 @@ with a single `enabled = false`, so no other values under `web` are needed.
   - `job.image.pull_policy` (`Default: "IfNotPresent"`): image pull policy
   - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
-- `operator` (`Default: {}`): Flux Operator settings
-  - `operator.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
-  - `operator.version` (`Optional`): Helm chart version constraint
-  - `operator.values` (`Default: {}`): Helm chart values object passed to the operator install; use this to customize the operator deployment (e.g. image overrides, node affinity, tolerations, resource limits)
 - `timeout` (`Default: "5m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources
