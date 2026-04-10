@@ -74,7 +74,8 @@ prereq_charts_with_adoption="[{
       namespace  = \"podinfo\"
       values_yaml = \"\"
       flux_adoption_check = {
-        kind      = \"deployment\"
+        resource  = \"deployment\"
+        api_group = \"apps\"
         name      = \"podinfo\"
         namespace = \"podinfo\"
       }

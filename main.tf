@@ -71,7 +71,7 @@ resource "helm_release" "this" {
           createNamespace = chart.create_namespace
           values          = chart.values_yaml
           fluxAdoptionCheck = chart.flux_adoption_check != null ? {
-            kind      = chart.flux_adoption_check.kind
+            resource = chart.flux_adoption_check.api_group != "" ? "${chart.flux_adoption_check.resource}.${chart.flux_adoption_check.api_group}" : chart.flux_adoption_check.resource
             name      = chart.flux_adoption_check.name
             namespace = chart.flux_adoption_check.namespace
           } : null

@@ -484,7 +484,8 @@ module "flux_operator_bootstrap" {
   - `gitops_resources.prerequisites.charts[].create_namespace` (`Default: true`): create the namespace if it doesn't exist
   - `gitops_resources.prerequisites.charts[].values_yaml` (`Default: ""`): Helm chart values as a YAML string (use `yamlencode({...})`); may contain `${variable}` references substituted using `runtime_info` values
   - `gitops_resources.prerequisites.charts[].flux_adoption_check` (`Optional`): when set, the bootstrap job checks the specified resource for Flux ownership labels before touching the release; if adopted, the chart is skipped entirely; if not adopted, the full unlock/recover/upgrade flow is used (like the Flux Operator chart); without this field, charts use create-if-missing semantics
-  - `gitops_resources.prerequisites.charts[].flux_adoption_check.kind` (`Required`): Kubernetes resource kind to check (e.g. `deployment`)
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check.resource` (`Required`): Kubernetes resource type to check (e.g. `deployment`)
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check.api_group` (`Default: ""`): API group of the resource (e.g. `apps`); omit for core API resources
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.name` (`Required`): resource name to check
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.namespace` (`Required`): resource namespace to check
 - `managed_resources` (`Default: {}`): resources reconciled by the bootstrap job on every run

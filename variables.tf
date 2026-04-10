@@ -12,7 +12,8 @@ variable "gitops_resources" {
         create_namespace = optional(bool, true)
         values_yaml      = optional(string, "")
         flux_adoption_check = optional(object({
-          kind      = string
+          resource  = string
+          api_group = optional(string, "")
           name      = string
           namespace = string
         }))
