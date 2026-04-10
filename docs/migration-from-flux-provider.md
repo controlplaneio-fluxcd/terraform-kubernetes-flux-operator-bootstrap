@@ -102,7 +102,7 @@ module "flux_operator_bootstrap" {
   revision = 1
 
   gitops_resources = {
-    instance_path = "${path.root}/clusters/<cluster>/flux-system/flux-instance.yaml"
+    instance_yaml = file("${path.root}/clusters/<cluster>/flux-system/flux-instance.yaml")
   }
 }
 ```
@@ -147,7 +147,7 @@ module "flux_operator_bootstrap" {
   revision = 1
 
   gitops_resources = {
-    flux_instance_path = "${path.root}/clusters/<cluster>/flux-system/flux-instance.yaml"
+    instance_yaml = file("${path.root}/clusters/<cluster>/flux-system/flux-instance.yaml")
   }
 
   managed_resources = {

@@ -1,9 +1,9 @@
 variable "gitops_resources" {
   description = "Resources that will be reconciled by Flux after bootstrap. These are applied with create-if-missing semantics so that Flux can take ownership of them for steady-state reconciliation."
   type = object({
-    instance_path = string
+    instance_yaml = string
     prerequisites = optional(object({
-      paths = optional(list(string), [])
+      yamls = optional(list(string), [])
       charts = optional(list(object({
         name             = string
         repository       = string
@@ -20,8 +20,8 @@ variable "gitops_resources" {
       })), [])
     }), {})
     operator_chart = optional(object({
-      repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
-      version    = optional(string)
+      repository  = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
+      version     = optional(string)
       values_yaml = optional(string, "")
     }), {})
   })
@@ -29,22 +29,13 @@ variable "gitops_resources" {
 
   validation {
     condition = (
-      can(file(abspath(var.gitops_resources.instance_path))) &&
-      can(yamldecode(file(abspath(var.gitops_resources.instance_path)))) &&
-      try(yamldecode(file(abspath(var.gitops_resources.instance_path))).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
-      try(yamldecode(file(abspath(var.gitops_resources.instance_path))).kind, "") == "FluxInstance" &&
-      try(length(yamldecode(file(abspath(var.gitops_resources.instance_path))).metadata.name) > 0, false) &&
-      try(length(yamldecode(file(abspath(var.gitops_resources.instance_path))).metadata.namespace) > 0, false)
+      can(yamldecode(var.gitops_resources.instance_yaml)) &&
+      try(yamldecode(var.gitops_resources.instance_yaml).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
+      try(yamldecode(var.gitops_resources.instance_yaml).kind, "") == "FluxInstance" &&
+      try(length(yamldecode(var.gitops_resources.instance_yaml).metadata.name) > 0, false) &&
+      try(length(yamldecode(var.gitops_resources.instance_yaml).metadata.namespace) > 0, false)
     )
-    error_message = "gitops_resources.instance_path must point to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
-  }
-
-  validation {
-    condition = alltrue([
-      for path in var.gitops_resources.prerequisites.paths :
-      can(file(abspath(path)))
-    ])
-    error_message = "gitops_resources.prerequisites.paths must contain only readable manifest files."
+    error_message = "gitops_resources.instance_yaml must be a valid FluxInstance manifest with metadata.name and metadata.namespace."
   }
 }
 
