@@ -242,6 +242,19 @@ module "flux_operator_bootstrap" {
   # ...
 
   job = {
+    affinity = {
+      nodeAffinity = {
+        requiredDuringSchedulingIgnoredDuringExecution = {
+          nodeSelectorTerms = [{
+            matchExpressions = [{
+              key      = "kubernetes.io/arch"
+              operator = "In"
+              values   = ["arm64"]
+            }]
+          }]
+        }
+      }
+    }
     tolerations = [{
       key      = "node-role.kubernetes.io/control-plane"
       operator = "Exists"
