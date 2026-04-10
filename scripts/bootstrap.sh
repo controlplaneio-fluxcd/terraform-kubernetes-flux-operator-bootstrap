@@ -897,7 +897,7 @@ reconcile_managed_resources "${scratch_dir}"
 
 # 6. Install Flux Operator (or recover from failed/stuck state, or upgrade if
 #    not yet adopted by helm-controller)
-if has_flux_ownership_label "deployment" "flux-operator" "${namespace}"; then
+if has_flux_ownership_label "deployment.apps" "flux-operator" "${namespace}"; then
   log "Flux Operator exists (adopted by Flux)"
 else
   unlock_helm_release "flux-operator" "${namespace}"
@@ -930,7 +930,7 @@ if ! kubectl get fluxinstance.fluxcd.controlplane.io "${instance_name}" -n "${na
   log "Create FluxInstance"
   kubectl apply -f "${flux_instance_file}" >/dev/null
   instance_created="true"
-elif has_flux_ownership_label "fluxinstance" "${instance_name}" "${namespace}"; then
+elif has_flux_ownership_label "fluxinstances.fluxcd.controlplane.io" "${instance_name}" "${namespace}"; then
   log "FluxInstance exists (adopted by Flux)"
 else
   log "Reapply FluxInstance (not yet adopted by Flux)"
