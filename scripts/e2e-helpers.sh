@@ -346,11 +346,11 @@ fi)
   debug_flux_operator_image_tag = "${flux_operator_image_tag}"
 
   gitops_resources = {
-    instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
+    instance_yaml = file("\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml")
     prerequisites = {
-      paths = [
-        "\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml",
-        "\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml",
+      yamls = [
+        file("\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml"),
+        file("\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml"),
       ]
 $(if [ -n "${prerequisite_charts}" ]; then
 cat <<PCHEOF
@@ -361,7 +361,7 @@ fi)
 $(if [ -n "${operator_values}" ]; then
 cat <<OPEOF
     operator_chart = {
-      values = ${operator_values}
+      values_yaml = yamlencode(${operator_values})
     }
 OPEOF
 fi)

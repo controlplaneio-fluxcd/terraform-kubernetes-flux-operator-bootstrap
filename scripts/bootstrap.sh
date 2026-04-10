@@ -837,14 +837,14 @@ if [ -n "${prerequisite_charts_file}" ] && [ -f "${prerequisite_charts_file}" ];
     # we do for the Flux Operator chart). Without it, we fall back to
     # create-if-missing semantics since prerequisite charts are user-defined
     # and there is no reliable way to tell whether Flux has adopted them.
-    adopt_kind="$(yq -r ".[$i].fluxAdoptionCheck.kind // \"\"" "${prerequisite_charts_file}")"
+    adopt_resource="$(yq -r ".[$i].fluxAdoptionCheck.resource // \"\"" "${prerequisite_charts_file}")"
     adopt_name="$(yq -r ".[$i].fluxAdoptionCheck.name // \"\"" "${prerequisite_charts_file}")"
     adopt_ns="$(yq -r ".[$i].fluxAdoptionCheck.namespace // \"\"" "${prerequisite_charts_file}")"
 
-    if [ -n "${adopt_kind}" ] && [ -n "${adopt_name}" ] && [ -n "${adopt_ns}" ]; then
+    if [ -n "${adopt_resource}" ] && [ -n "${adopt_name}" ] && [ -n "${adopt_ns}" ]; then
       # Adoption check available: use the same unlock/recover/upgrade flow as
       # the Flux Operator chart, gated behind the adoption check.
-      if has_flux_ownership_label "${adopt_kind}" "${adopt_name}" "${adopt_ns}"; then
+      if has_flux_ownership_label "${adopt_resource}" "${adopt_name}" "${adopt_ns}"; then
         log "- skip chart ${chart_name} (adopted by Flux)"
       else
         unlock_helm_release "${chart_name}" "${chart_namespace}"
@@ -897,7 +897,7 @@ reconcile_managed_resources "${scratch_dir}"
 
 # 6. Install Flux Operator (or recover from failed/stuck state, or upgrade if
 #    not yet adopted by helm-controller)
-if has_flux_ownership_label "deployment" "flux-operator" "${namespace}"; then
+if has_flux_ownership_label "deployment.apps" "flux-operator" "${namespace}"; then
   log "Flux Operator exists (adopted by Flux)"
 else
   unlock_helm_release "flux-operator" "${namespace}"
@@ -930,7 +930,7 @@ if ! kubectl get fluxinstance.fluxcd.controlplane.io "${instance_name}" -n "${na
   log "Create FluxInstance"
   kubectl apply -f "${flux_instance_file}" >/dev/null
   instance_created="true"
-elif has_flux_ownership_label "fluxinstance" "${instance_name}" "${namespace}"; then
+elif has_flux_ownership_label "fluxinstances.fluxcd.controlplane.io" "${instance_name}" "${namespace}"; then
   log "FluxInstance exists (adopted by Flux)"
 else
   log "Reapply FluxInstance (not yet adopted by Flux)"

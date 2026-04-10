@@ -1,8 +1,8 @@
 locals {
-  flux_instance_yaml = file(abspath(var.gitops_resources.instance_path))
+  flux_instance_yaml = var.gitops_resources.instance_yaml
   flux_instance      = yamldecode(local.flux_instance_yaml)
   has_secrets_yaml   = trimspace(var.managed_resources.secrets_yaml) != ""
-  prerequisite_files = { for idx, path in var.gitops_resources.prerequisites.paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
+  prerequisite_files = { for idx, yaml in var.gitops_resources.prerequisites.yamls : format("prerequisite-%03d.yaml", idx) => yaml }
   timeout_value      = tonumber(trimsuffix(trimsuffix(trimsuffix(var.timeout, "s"), "m"), "h"))
   timeout_unit       = substr(var.timeout, length(var.timeout) - 1, 1)
   timeout_seconds = local.timeout_unit == "s" ? local.timeout_value : (
@@ -71,7 +71,7 @@ resource "helm_release" "this" {
           createNamespace = chart.create_namespace
           values          = chart.values_yaml
           fluxAdoptionCheck = chart.flux_adoption_check != null ? {
-            kind      = chart.flux_adoption_check.kind
+            resource  = chart.flux_adoption_check.api_group != "" ? "${chart.flux_adoption_check.resource}.${chart.flux_adoption_check.api_group}" : chart.flux_adoption_check.resource
             name      = chart.flux_adoption_check.name
             namespace = chart.flux_adoption_check.namespace
           } : null
@@ -80,7 +80,7 @@ resource "helm_release" "this" {
       operatorChart = {
         repository = var.gitops_resources.operator_chart.repository
         version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
-        values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
+        values     = var.gitops_resources.operator_chart.values_yaml
       }
     }
     managedResources = {

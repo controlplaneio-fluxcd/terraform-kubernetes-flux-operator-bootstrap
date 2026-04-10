@@ -134,7 +134,7 @@ module "bootstrap" {
   }
 
   gitops_resources = {
-    instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
+    instance_yaml = file("\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml")
   }
 }
 EOF
