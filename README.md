@@ -487,7 +487,7 @@ module "flux_operator_bootstrap" {
   - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
   - `job.host_network` (`Default: false`): run the bootstrap job with host networking; required when the job must install a CNI plugin (e.g. Cilium) since pod networking is unavailable until the CNI is running
-- `timeout` (`Default: "5m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
+- `timeout` (`Default: "10m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources
 are reconciled with server-side apply and drift from manual `kubectl` changes

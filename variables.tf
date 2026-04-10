@@ -105,7 +105,7 @@ variable "revision" {
 variable "timeout" {
   description = "Shared timeout for FluxInstance readiness waiting and the Helm release timeout."
   type        = string
-  default     = "5m"
+  default     = "10m"
 }
 
 variable "debug_fault_injection_message" {
