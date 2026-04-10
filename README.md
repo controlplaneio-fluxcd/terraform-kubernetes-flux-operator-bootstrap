@@ -274,13 +274,13 @@ module "flux_operator_bootstrap" {
   gitops_resources = {
     # ...
     operator_chart = {
-      values = {
+      values_yaml = yamlencode({
         tolerations = [{
           key      = "node-role.kubernetes.io/control-plane"
           operator = "Exists"
           effect   = "NoSchedule"
         }]
-      }
+      })
     }
   }
 }
@@ -405,10 +405,10 @@ spec:
             valuesKey: values.yaml
 ```
 
-During bootstrap, load the same file with `yamldecode(file(...))` and use
-`merge()` to override fields that should differ. For example, to disable the
-web UI during bootstrap (the `HTTPRoute` or `Ingress` CRD may not exist yet),
-while the GitOps reconciliation enables it afterwards:
+During bootstrap, load the same file with `file(...)` and pass it directly as
+`values_yaml`. To override fields that should differ (for example, to disable
+the web UI during bootstrap when the `HTTPRoute` or `Ingress` CRD may not
+exist yet), use `yamlencode(merge(...))`:
 
 ```hcl
 module "flux_operator_bootstrap" {
@@ -417,10 +417,10 @@ module "flux_operator_bootstrap" {
   gitops_resources = {
     # ...
     operator_chart = {
-      values = merge(
+      values_yaml = yamlencode(merge(
         yamldecode(file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")),
         { web = { enabled = false } },
-      )
+      ))
     }
   }
 }
@@ -429,6 +429,14 @@ module "flux_operator_bootstrap" {
 Note that Terraform's `merge()` is shallow — it replaces top-level keys, not
 nested ones. This works here because the entire `web` key is being overridden
 with a single `enabled = false`, so no other values under `web` are needed.
+
+When no overrides are needed, pass the file directly:
+
+```hcl
+    operator_chart = {
+      values_yaml = file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")
+    }
+```
 
 ### Managed secrets from an external secrets store
 
@@ -472,7 +480,7 @@ module "flux_operator_bootstrap" {
   - `gitops_resources.operator_chart` (`Default: {}`): Flux Operator Helm chart settings
   - `gitops_resources.operator_chart.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"`): OCI Helm chart repository (without the `oci://` prefix)
   - `gitops_resources.operator_chart.version` (`Optional`): Helm chart version constraint
-  - `gitops_resources.operator_chart.values` (`Default: {}`): Helm chart values object passed to the operator install; use this to customize the operator deployment (e.g. image overrides, node affinity, tolerations, resource limits); may contain `${variable}` references substituted using `runtime_info` values
+  - `gitops_resources.operator_chart.values_yaml` (`Default: ""`): Helm chart values as a YAML string (use `yamlencode({...})`); may contain `${variable}` references substituted using `runtime_info` values
   - `gitops_resources.instance_path` (`Required`): path to the `FluxInstance` manifest file; may contain `${variable}` references substituted using `runtime_info` values
   - `gitops_resources.prerequisites` (`Default: {}`): prerequisite resource settings
   - `gitops_resources.prerequisites.paths` (`Default: []`): ordered list of paths to prerequisite manifest files; may contain `${variable}` references substituted using `runtime_info` values
@@ -482,7 +490,7 @@ module "flux_operator_bootstrap" {
   - `gitops_resources.prerequisites.charts[].namespace` (`Required`): namespace to install the chart into
   - `gitops_resources.prerequisites.charts[].version` (`Optional`): Helm chart version constraint
   - `gitops_resources.prerequisites.charts[].create_namespace` (`Default: true`): create the namespace if it doesn't exist
-  - `gitops_resources.prerequisites.charts[].values_yaml` (`Default: ""`): Helm chart values as a YAML string (use `yamlencode({...})`); may contain `${variable}` references substituted using `runtime_info` values
+  - `gitops_resources.prerequisites.charts[].values_yaml` (`Default: ""`): Helm chart values as a YAML string; may contain `${variable}` references substituted using `runtime_info` values
   - `gitops_resources.prerequisites.charts[].flux_adoption_check` (`Optional`): when set, the bootstrap job checks the specified resource for Flux ownership labels before touching the release; if adopted, the chart is skipped entirely; if not adopted, the full unlock/recover/upgrade flow is used (like the Flux Operator chart); without this field, charts use create-if-missing semantics
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.resource` (`Required`): Kubernetes resource type to check (e.g. `deployment`)
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.api_group` (`Default: ""`): API group of the resource (e.g. `apps`); omit for core API resources

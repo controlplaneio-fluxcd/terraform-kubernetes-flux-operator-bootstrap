@@ -22,7 +22,7 @@ variable "gitops_resources" {
     operator_chart = optional(object({
       repository = optional(string, "ghcr.io/controlplaneio-fluxcd/charts/flux-operator")
       version    = optional(string)
-      values     = optional(any, {})
+      values_yaml = optional(string, "")
     }), {})
   })
   nullable = false

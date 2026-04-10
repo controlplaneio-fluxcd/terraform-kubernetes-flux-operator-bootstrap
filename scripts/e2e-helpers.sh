@@ -361,7 +361,7 @@ fi)
 $(if [ -n "${operator_values}" ]; then
 cat <<OPEOF
     operator_chart = {
-      values = ${operator_values}
+      values_yaml = yamlencode(${operator_values})
     }
 OPEOF
 fi)

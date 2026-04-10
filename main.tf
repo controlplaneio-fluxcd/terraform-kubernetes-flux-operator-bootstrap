@@ -80,7 +80,7 @@ resource "helm_release" "this" {
       operatorChart = {
         repository = var.gitops_resources.operator_chart.repository
         version    = var.gitops_resources.operator_chart.version != null ? var.gitops_resources.operator_chart.version : ""
-        values     = length(var.gitops_resources.operator_chart.values) > 0 ? yamlencode(var.gitops_resources.operator_chart.values) : ""
+        values     = var.gitops_resources.operator_chart.values_yaml
       }
     }
     managedResources = {

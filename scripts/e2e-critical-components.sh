@@ -142,7 +142,6 @@ module "bootstrap" {
           namespace        = "spire-server"
           version          = "${e2e_spire_crds_version}"
           create_namespace = true
-          values           = {}
         },
         {
           name             = "spire"
