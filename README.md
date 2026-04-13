@@ -100,7 +100,7 @@ provider "kubernetes" {
 
 module "flux_operator_bootstrap" {
   source  = "controlplaneio-fluxcd/flux-operator-bootstrap/kubernetes"
-  version = "0.1.0"
+  version = "0.2.0"
 
   revision = var.bootstrap_revision
 
@@ -202,7 +202,7 @@ provider "helm" {
 module "flux_operator_bootstrap" {
   depends_on = [module.eks]
   source     = "controlplaneio-fluxcd/flux-operator-bootstrap/kubernetes"
-  version    = "0.1.0"
+  version    = "0.2.0"
   revision   = 1
   # ...
 }
