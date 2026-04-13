@@ -510,6 +510,11 @@ module "flux_operator_bootstrap" {
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
   - `job.host_network` (`Default: false`): run the bootstrap job with host networking; required when the job must install a CNI plugin (e.g. Cilium) since pod networking is unavailable until the CNI is running
 - `timeout` (`Default: "10m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
+- `debug_on_failure` (`Default: false`): when true, creates a `null_resource` that polls the bootstrap `Job` and relays its logs to Terraform output when the `Job` fails or never reaches a terminal state. The `null_resource` runs in parallel with `helm_release` and only triggers when `helm_release` will install or upgrade (i.e. on inputs change or `revision` bump). Requirements on the Terraform execution environment:
+  - `bash` must be on `PATH` — the `local-exec` provisioner calls `["bash", "-c", …]`. On Linux and macOS this is native `bash`; on Windows, `bash.exe` from [Git for Windows](https://gitforwindows.org/) (Git Bash) satisfies this
+  - `kubectl` must be on `PATH`
+  - `kubectl` must be configured with credentials for the target cluster (via `KUBECONFIG`, the default `~/.kube/config`, or any mechanism resolvable by `kubectl` in the same environment Terraform runs in)
+  - The `hashicorp/null` provider (~> 3.2) is a required provider of this module
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources
 are reconciled with server-side apply and drift from manual `kubectl` changes

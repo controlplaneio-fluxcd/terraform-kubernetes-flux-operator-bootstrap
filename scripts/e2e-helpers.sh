@@ -174,6 +174,7 @@ render_root_module() {
   timeout="${8:-5m}"
   operator_values="${9:-}"
   prerequisite_charts="${10:-}"
+  debug_on_failure="${11:-false}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -341,6 +342,8 @@ fi)
   }
 
   timeout = "${timeout}"
+
+  debug_on_failure = ${debug_on_failure}
 
   debug_fault_injection_message  = "${fault_injection_message}"
   debug_flux_operator_image_tag = "${flux_operator_image_tag}"

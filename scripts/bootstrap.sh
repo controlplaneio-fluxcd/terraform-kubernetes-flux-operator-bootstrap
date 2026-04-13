@@ -142,14 +142,21 @@ validate_flux_instance_file() {
 # has_flux_ownership_label checks whether a resource has been adopted by
 # kustomize-controller or helm-controller by looking for their ownership labels.
 # Resources not yet adopted can be safely re-applied by the bootstrap script.
-# $1: resource kind, $2: resource name, $3: namespace. Returns 0 if adopted.
+# $1: kubectl resource specifier (e.g. "deployment.apps", "configmap"),
+# $2: resource name, $3: namespace ("" for cluster-scoped). Returns 0 if adopted.
 has_flux_ownership_label() {
   resource_kind="$1"
   resource_name="$2"
-  resource_namespace="$3"
-  # Extract label keys as a space-separated string.
-  label_keys="$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
-    -o go-template='{{range $k, $v := .metadata.labels}}{{$k}} {{end}}' 2>/dev/null || true)"
+  resource_namespace="${3:-}"
+  # Extract label keys as a space-separated string. Skip -n for cluster-scoped
+  # resources to avoid querying the wrong scope.
+  if [ -n "${resource_namespace}" ]; then
+    label_keys="$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+      -o go-template='{{range $k, $v := .metadata.labels}}{{$k}} {{end}}' 2>/dev/null || true)"
+  else
+    label_keys="$(kubectl get "${resource_kind}" "${resource_name}" \
+      -o go-template='{{range $k, $v := .metadata.labels}}{{$k}} {{end}}' 2>/dev/null || true)"
+  fi
   case "${label_keys}" in
     *kustomize.toolkit.fluxcd.io/name*) return 0 ;;
     *helm.toolkit.fluxcd.io/name*) return 0 ;;
@@ -161,21 +168,52 @@ has_flux_ownership_label() {
 # Prerequisites (create-if-missing)
 # ---------------------------------------------------------------------------
 
-# prerequisite_details uses kubectl dry-run to resolve the final kind/name/namespace
-# of a manifest, handling defaulting and multi-resource types that yq alone
-# can't resolve. $1: manifest file path. Prints "kind|name|namespace" to stdout.
+# resource_specifier converts a Kubernetes Kind + apiVersion to a kubectl
+# resource specifier that disambiguates types with the same kind across API
+# groups. Core types ("v1" apiVersion) become just "<kind>"; grouped types
+# become "<kind>.<group>" (e.g. apps/v1 Deployment → "deployment.apps").
+# $1: kind, $2: apiVersion. Prints the specifier.
+resource_specifier() {
+  spec_kind="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  spec_api_version="$2"
+  # "*/*" matches apiVersion values that contain a "/" (grouped types like
+  # "apps/v1"); "*" is the catch-all for core types like "v1".
+  # ${var%%/*} strips everything from the first "/" onwards, leaving just
+  # the group (e.g. "apps/v1" becomes "apps").
+  case "${spec_api_version}" in
+    */*) printf '%s.%s' "${spec_kind}" "${spec_api_version%%/*}" ;;
+    *)   printf '%s' "${spec_kind}" ;;
+  esac
+}
+
+# prerequisite_details uses kubectl dry-run to resolve the final
+# kind/apiVersion/name/namespace of a manifest, handling defaulting and
+# multi-resource types that yq alone can't resolve. Output fields are pipe
+# delimited. $1: manifest file path.
+# Prints "kind|spec|name|namespace" to stdout, where spec is the kubectl
+# resource specifier (see resource_specifier above).
 prerequisite_details() {
   manifest_file="$1"
-  kubectl create --dry-run=client -f "${manifest_file}" -o jsonpath='{.kind}|{.metadata.name}|{.metadata.namespace}'
+  raw="$(kubectl create --dry-run=client -f "${manifest_file}" \
+    -o jsonpath='{.kind}|{.apiVersion}|{.metadata.name}|{.metadata.namespace}')"
+  raw_kind="$(printf '%s' "${raw}" | cut -d'|' -f1)"
+  raw_api_version="$(printf '%s' "${raw}" | cut -d'|' -f2)"
+  raw_name="$(printf '%s' "${raw}" | cut -d'|' -f3)"
+  raw_namespace="$(printf '%s' "${raw}" | cut -d'|' -f4)"
+  printf '%s|%s|%s|%s' \
+    "${raw_kind}" \
+    "$(resource_specifier "${raw_kind}" "${raw_api_version}")" \
+    "${raw_name}" \
+    "${raw_namespace}"
 }
 
 # format_prerequisite_details formats the pipe-delimited output of prerequisite_details
-# into a human-readable label. $1: "kind|name|namespace" string. Prints to stdout.
+# into a human-readable label. $1: "kind|spec|name|namespace" string. Prints to stdout.
 format_prerequisite_details() {
   manifest_info="$1"
   manifest_kind="$(printf '%s' "${manifest_info}" | cut -d'|' -f1)"
-  manifest_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f2)"
-  manifest_namespace="$(printf '%s' "${manifest_info}" | cut -d'|' -f3)"
+  manifest_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f3)"
+  manifest_namespace="$(printf '%s' "${manifest_info}" | cut -d'|' -f4)"
 
   if [ -n "${manifest_namespace}" ]; then
     printf '%s %s/%s' "${manifest_kind}" "${manifest_namespace}" "${manifest_name}"
@@ -194,11 +232,11 @@ apply_prerequisite_manifest() {
   manifest_label="$(format_prerequisite_details "${manifest_info}")"
 
   if kubectl get -f "${manifest_file}" >/dev/null 2>&1; then
-    # Parse kind|name|namespace from prerequisite_details output.
-    p_kind="$(printf '%s' "${manifest_info}" | cut -d'|' -f1)"
-    p_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f2)"
-    p_ns="$(printf '%s' "${manifest_info}" | cut -d'|' -f3)"
-    if has_flux_ownership_label "${p_kind}" "${p_name}" "${p_ns}"; then
+    # Parse kind|spec|name|namespace from prerequisite_details output.
+    p_spec="$(printf '%s' "${manifest_info}" | cut -d'|' -f2)"
+    p_name="$(printf '%s' "${manifest_info}" | cut -d'|' -f3)"
+    p_ns="$(printf '%s' "${manifest_info}" | cut -d'|' -f4)"
+    if has_flux_ownership_label "${p_spec}" "${p_name}" "${p_ns}"; then
       log "- skip ${manifest_label} (adopted by Flux)"
       return 0
     fi
@@ -214,6 +252,7 @@ apply_prerequisite_manifest() {
 # apply_prerequisites iterates over prerequisite-*.yaml files, splits each into
 # individual manifests, and applies them with create-if-missing semantics.
 # $1: scratch directory for temporary split files.
+# Reads: prerequisites_dir (input manifests directory).
 apply_prerequisites() {
   scratch_dir="$1"
   found_prerequisite="false"
@@ -252,19 +291,32 @@ disallowed_field_managers="kubectl before-first-apply"
 # manual edits) that would conflict with SSA ownership. Without this, SSA would
 # fail or silently skip fields owned by disallowed managers. Indices are
 # collected in reverse order so removals don't shift later indices.
-# $1: resource kind, $2: resource name, $3: resource namespace.
+# $1: kubectl resource specifier, $2: resource name, $3: namespace ("" for cluster-scoped).
+# Reads: disallowed_field_managers (space-separated list of manager names).
 strip_disallowed_field_managers() {
   resource_kind="$1"
   resource_name="$2"
-  resource_namespace="$3"
+  resource_namespace="${3:-}"
 
-  if ! kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" >/dev/null 2>&1; then
+  # Build a namespace flag that's either "-n <ns>" for namespaced resources or
+  # empty for cluster-scoped resources. The expansion below is intentionally
+  # unquoted so that an empty ns_flag_get disappears entirely from the command
+  # line (quoted empty would become a literal "" argument).
+  if [ -n "${resource_namespace}" ]; then
+    ns_flag_get="-n ${resource_namespace}"
+  else
+    ns_flag_get=""
+  fi
+
+  # shellcheck disable=SC2086
+  if ! kubectl get "${resource_kind}" "${resource_name}" ${ns_flag_get} >/dev/null 2>&1; then
     return 0
   fi
 
   # Fetch all field managers as a space-separated list of "manager=operation" pairs
   # using a Go template. Example output: "flux-operator-bootstrap=Apply kubectl=Update"
-  managed_fields="$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+  # shellcheck disable=SC2086
+  managed_fields="$(kubectl get "${resource_kind}" "${resource_name}" ${ns_flag_get} \
     -o go-template='{{range $i, $mf := .metadata.managedFields}}{{if $i}} {{end}}{{$mf.manager}}={{$mf.operation}}{{end}}' 2>/dev/null || true)"
 
   if [ -z "${managed_fields}" ]; then
@@ -306,8 +358,9 @@ strip_disallowed_field_managers() {
   done
   patch="${patch}]"
 
-  log "  strip disallowed field managers from ${resource_kind} ${resource_namespace}/${resource_name}"
-  kubectl patch "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+  log "  strip disallowed field managers from ${resource_kind} ${resource_namespace:-<cluster>}/${resource_name}"
+  # shellcheck disable=SC2086
+  kubectl patch "${resource_kind}" "${resource_name}" ${ns_flag_get} \
     --type=json -p "${patch}" >/dev/null
 }
 
@@ -315,12 +368,15 @@ strip_disallowed_field_managers() {
 # It dry-runs first to detect the state (missing, drifted, or in-sync) and only
 # performs the actual apply when the resource needs to be created or corrected.
 # $1: manifest file path, $2: space-separated list of allowed resource kinds.
+# Reads: namespace (target FluxInstance namespace), ssa_field_manager.
 reconcile_managed_resource() {
   manifest_file="$1"
   allowed_kinds="$2"
   manifest_kind="$(yq_field "${manifest_file}" kind)"
+  manifest_api_version="$(yq_field "${manifest_file}" apiVersion)"
   manifest_name="$(yq_metadata_field "${manifest_file}" name)"
   manifest_namespace="$(yq_metadata_field "${manifest_file}" namespace)"
+  manifest_spec="$(resource_specifier "${manifest_kind}" "${manifest_api_version}")"
 
   # Validate the resource kind is in the allow list.
   found_allowed="false"
@@ -345,7 +401,7 @@ reconcile_managed_resource() {
     return 1
   fi
 
-  strip_disallowed_field_managers "${manifest_kind}" "${manifest_name}" "${namespace}"
+  strip_disallowed_field_managers "${manifest_spec}" "${manifest_name}" "${namespace}"
 
   # Server-side dry-run to detect the current state without mutating the cluster.
   # The output contains "unchanged", "created", "configured", or "serverside-applied".
@@ -388,6 +444,7 @@ reconcile_managed_resource() {
 # "Kind/namespace/name" entry per line to the output file. If the ConfigMap
 # doesn't exist yet, the output file is left empty.
 # $1: output file path.
+# Reads: inventory_config_map_name, bootstrap_namespace.
 load_inventory_entries() {
   output_file="$1"
 
@@ -410,6 +467,7 @@ load_inventory_entries() {
 
 # update_inventory writes the current entries back to the inventory ConfigMap.
 # $1: file with one "Kind/namespace/name" entry per line.
+# Reads: inventory_config_map_name, bootstrap_namespace.
 update_inventory() {
   entries_file="$1"
 
@@ -478,6 +536,8 @@ garbage_collect_removed_entries() {
 # splits and applies secrets, builds and applies the runtime-info ConfigMap,
 # then garbage-collects any resources removed since the previous run.
 # $1: scratch directory for temporary files.
+# Reads: managed_secrets_file, runtime_info_file, runtime_info_labels_file,
+#        runtime_info_annotations_file, runtime_info_config_map_name, namespace.
 reconcile_managed_resources() {
   scratch_dir="$1"
   previous_entries_file="${scratch_dir}/previous-inventory-entries.txt"
@@ -573,6 +633,7 @@ helm_release_status() {
 # repository. Uses --install so it works for both fresh installs and upgrades.
 # $1: release name, $2: OCI repository, $3: namespace, $4: version (optional),
 # $5: values file path (optional), $6: create namespace ("true"/"false", default "true").
+# Reads: bootstrap_timeout (for --wait/--timeout).
 install_or_upgrade_chart() {
   chart_release_name="$1"
   chart_repository="$2"
@@ -606,9 +667,13 @@ install_or_upgrade_chart() {
 
 # install_or_upgrade_flux_operator installs or upgrades the flux-operator Helm
 # chart from the OCI repository. Uses --install so it works for both fresh
-# installs and upgrades of existing releases. Uses operator_values_file (via -f)
-# for custom chart values and debug_flux_operator_image_tag (via --set) for
-# testing overrides.
+# installs and upgrades of existing releases. Reads globals:
+#   operator_chart_repository, operator_chart_version — OCI chart source
+#   operator_values_file                             — custom chart values (-f)
+#   debug_flux_operator_image_tag                    — testing override that
+#                                                      forces a short timeout
+#   namespace                                        — target FluxInstance namespace
+#   bootstrap_timeout                                — --wait timeout
 install_or_upgrade_flux_operator() {
   values_args=""
   set_args=""
@@ -684,27 +749,115 @@ unlock_helm_release() {
 # FluxInstance CRD
 # ---------------------------------------------------------------------------
 
-# wait_for_flux_instance_crd polls for the CRD to appear (the operator creates
-# it asynchronously after install) then waits for it to become Established.
+# wait_for_flux_instance_crd waits for the FluxInstance CRD to be created by
+# the Flux Operator (creation is asynchronous after the operator install)
+# and then waits for it to reach the Established condition. Both waits share
+# the bootstrap_timeout budget so there is no hidden hardcoded timeout.
+# Reads: bootstrap_timeout. Returns non-zero if either wait times out.
 wait_for_flux_instance_crd() {
-  end_time=$(( $(date +%s) + 300 ))
-  while [ "$(date +%s)" -lt "${end_time}" ]; do
-    if kubectl get crd fluxinstances.fluxcd.controlplane.io >/dev/null 2>&1; then
-      log "CRD found; waiting for Established"
-      kubectl wait --for=condition=Established crd/fluxinstances.fluxcd.controlplane.io --timeout="${bootstrap_timeout}" >/dev/null
-      return 0
-    fi
-    sleep 2
-  done
+  kubectl wait --for=create \
+    crd/fluxinstances.fluxcd.controlplane.io \
+    --timeout="${bootstrap_timeout}" >/dev/null
+  log "CRD found; waiting for Established"
+  kubectl wait --for=condition=Established \
+    crd/fluxinstances.fluxcd.controlplane.io \
+    --timeout="${bootstrap_timeout}" >/dev/null
+}
 
-  fail "Timed out waiting for FluxInstance CRD to be created"
-  return 1
+# ---------------------------------------------------------------------------
+# Debug output (runs on failure via trap)
+# ---------------------------------------------------------------------------
+
+# dump_controller_status prints a short deployment summary and pod logs for
+# a Flux controller. If the deployment has no running pods, prints describe
+# output instead. All kubectl calls tolerate failures so debug output itself
+# never aborts. $1: deployment name, $2: namespace.
+dump_controller_status() {
+  deployment_name="$1"
+  deployment_namespace="$2"
+
+  log "=== ${deployment_name} ==="
+  if ! kubectl get deployment.apps "${deployment_name}" -n "${deployment_namespace}" 2>&1; then
+    return 0
+  fi
+  if ! kubectl logs "deployment.apps/${deployment_name}" -n "${deployment_namespace}" \
+    --all-containers=true 2>&1; then
+    log "--- no logs available, deployment description ---"
+    kubectl describe deployment.apps "${deployment_name}" -n "${deployment_namespace}" 2>&1 || true
+  fi
+}
+
+# dump_prerequisite_yamls iterates over prerequisite manifests and prints the
+# current YAML of each resource as it exists in the cluster. Uses the kubectl
+# resource specifier (kind.group) so types are unambiguous, and skips the
+# namespace flag for cluster-scoped resources (those omitting metadata.namespace).
+# Tolerates missing resources and parse errors so debug output never fails.
+# Reads: prerequisites_dir.
+dump_prerequisite_yamls() {
+  found="false"
+  for prerequisite_file in "${prerequisites_dir}"/prerequisite-*.yaml; do
+    if [ ! -f "${prerequisite_file}" ]; then
+      continue
+    fi
+    doc_count="$(yq ea '[.] | length' "${prerequisite_file}" 2>/dev/null || echo 0)"
+    i=0
+    while [ "$i" -lt "$doc_count" ]; do
+      p_kind="$(yq ea "select(documentIndex == $i) | .kind // \"\"" "${prerequisite_file}" 2>/dev/null || true)"
+      p_api_version="$(yq ea "select(documentIndex == $i) | .apiVersion // \"\"" "${prerequisite_file}" 2>/dev/null || true)"
+      p_name="$(yq ea "select(documentIndex == $i) | .metadata.name // \"\"" "${prerequisite_file}" 2>/dev/null || true)"
+      p_ns="$(yq ea "select(documentIndex == $i) | .metadata.namespace // \"\"" "${prerequisite_file}" 2>/dev/null || true)"
+      if [ -n "${p_kind}" ] && [ -n "${p_name}" ]; then
+        found="true"
+        p_spec="$(resource_specifier "${p_kind}" "${p_api_version}")"
+        log "--- ${p_kind} ${p_ns:-<cluster>}/${p_name} ---"
+        if [ -n "${p_ns}" ]; then
+          kubectl get "${p_spec}" "${p_name}" -n "${p_ns}" -o yaml 2>&1 || true
+        else
+          kubectl get "${p_spec}" "${p_name}" -o yaml 2>&1 || true
+        fi
+      fi
+      i=$((i + 1))
+    done
+  done
+  if [ "${found}" = "false" ]; then
+    log "No prerequisites to dump"
+  fi
+}
+
+# dump_debug_info prints a full debug dump: Flux controller status/logs and
+# prerequisite resource YAMLs. Uses ${namespace} (the target FluxInstance
+# namespace) if set, otherwise skips the controller section. Never fails.
+dump_debug_info() {
+  log ""
+  log "=========================================================================="
+  log "DEBUG OUTPUT"
+  log "=========================================================================="
+
+  target_ns="${namespace:-}"
+  if [ -n "${target_ns}" ]; then
+    dump_controller_status "flux-operator" "${target_ns}"
+    dump_controller_status "source-controller" "${target_ns}"
+    dump_controller_status "kustomize-controller" "${target_ns}"
+  else
+    log "Target namespace unknown, skipping controller status dump"
+  fi
+
+  log "=== Prerequisite resources ==="
+  dump_prerequisite_yamls
+
+  log "=========================================================================="
 }
 
 # ---------------------------------------------------------------------------
 # Cleanup (runs on exit via trap)
 # ---------------------------------------------------------------------------
 
+# cleanup deletes the bootstrap transport resources (ConfigMap, ServiceAccount,
+# ClusterRoleBinding) and the scratch directory. Runs unconditionally on exit
+# via the cleanup_and_debug trap. Never fails — each kubectl delete tolerates
+# "not found" and other delete errors are logged but do not abort cleanup.
+# Reads: scratch_dir, bootstrap_config_map, bootstrap_namespace,
+# bootstrap_service_account, bootstrap_cluster_role_binding.
 cleanup() {
   log "Cleanup bootstrap transport resources"
   if [ -n "${scratch_dir:-}" ] && [ -d "${scratch_dir}" ]; then
@@ -720,6 +873,18 @@ cleanup() {
   if ! kubectl delete clusterrolebinding "${bootstrap_cluster_role_binding}" --ignore-not-found=true >/dev/null; then
     log "Failed to delete ClusterRoleBinding ${bootstrap_cluster_role_binding}"
   fi
+}
+
+# cleanup_and_debug runs on script exit. On non-zero exit it prints the debug
+# dump before running cleanup. Saves the original exit code at entry and
+# re-exits with it so the failure propagates.
+cleanup_and_debug() {
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    dump_debug_info 2>&1 || true
+  fi
+  cleanup
+  exit "${rc}"
 }
 
 # ===========================================================================
@@ -741,7 +906,7 @@ fi
 log "Target: ${namespace}/${instance_name}"
 log "Bootstrap namespace: ${bootstrap_namespace}"
 
-trap cleanup EXIT
+trap cleanup_and_debug EXIT
 scratch_dir="$(mktemp -d)"
 
 # 1. Substitute runtime info variables into input manifests
