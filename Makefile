@@ -35,3 +35,12 @@ e2e-migration:
 .PHONY: e2e-critical-components
 e2e-critical-components:
 	stdbuf -oL -eL bash ./scripts/e2e-critical-components.sh 2>&1 | tee e2e-critical-components.log
+
+# e2e-debug-shell is a Windows-focused smoke test that exercises the
+# debug_on_failure local-exec template against a fake kubectl. It does not
+# need Docker or kind and is intentionally invoked without stdbuf so it stays
+# portable to Git Bash on Windows (no GNU coreutils stdbuf binary). The full
+# Linux end-to-end is covered by e2e-batch-2.
+.PHONY: e2e-debug-shell
+e2e-debug-shell:
+	bash ./scripts/e2e-debug-shell.sh 2>&1 | tee e2e-debug-shell.log

@@ -89,16 +89,45 @@ jobs:
       - name: Run critical components end-to-end test
         run: make docker-build e2e-critical-components
 
+  e2e-debug-shell:
+    # Windows-only smoke test that exercises the debug_on_failure local-exec
+    # template against a fake kubectl on PATH. Validates that the bash
+    # interpreter (Git Bash on Windows) can run the same template the module
+    # ships, without needing Docker or kind. The full Linux end-to-end is
+    # already covered by e2e-batch (matrix entry 2).
+    runs-on: windows-latest
+    name: e2e-debug-shell on Windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_OS=$RUNNER_OS"
+          command -v bash
+          bash --version | head -1
+          command -v terraform
+          terraform version
+
+      - name: Run debug shell smoke test
+        shell: bash
+        run: bash ./scripts/e2e-debug-shell.sh
+
   e2e:
     if: always()
-    needs: [e2e-pending, e2e-batch, e2e-migration, e2e-critical-components]
+    needs: [e2e-pending, e2e-batch, e2e-migration, e2e-critical-components, e2e-debug-shell]
     runs-on: ubuntu-latest
     steps:
       - name: Update status on PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}" "${{ needs.e2e-critical-components.result }}"; do
+          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}" "${{ needs.e2e-critical-components.result }}" "${{ needs.e2e-debug-shell.result }}"; do
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               gh api "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
                 -f state=failure \
@@ -116,6 +145,6 @@ jobs:
 
       - name: Verify result
         run: |
-          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}" "${{ needs.e2e-critical-components.result }}"; do
+          for result in "${{ needs.e2e-batch.result }}" "${{ needs.e2e-migration.result }}" "${{ needs.e2e-critical-components.result }}" "${{ needs.e2e-debug-shell.result }}"; do
             [ "$result" = "success" ] || [ "$result" = "skipped" ] || exit 1
           done

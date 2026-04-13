@@ -21,8 +21,8 @@ note "Resetting kind cluster ${cluster_name}"
 kind delete cluster --name "${cluster_name}" 2>/dev/null || true
 
 section "Failure Path"
-note "Rendering failure scenario Terraform root"
-render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "one"
+note "Rendering failure scenario Terraform root with debug logs enabled"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "one" "" 1 "" "5m" "" "" "true"
 note "Initializing failure scenario"
 terraform -chdir="${failure_tf_dir}" init -no-color -backend=false
 
@@ -36,6 +36,20 @@ cat "${failure_apply_log}"
 
 if [ "${failure_status}" -eq 0 ]; then
   echo "Fault-injected apply unexpectedly succeeded" >&2
+  exit 1
+fi
+
+note "Verifying debug logs were relayed to Terraform output"
+if ! grep -q "flux-operator-bootstrap job logs" "${failure_apply_log}"; then
+  echo "Debug null_resource did not relay job logs to Terraform output" >&2
+  exit 1
+fi
+if ! grep -q "DEBUG OUTPUT" "${failure_apply_log}"; then
+  echo "Bootstrap script did not dump debug info on failure" >&2
+  exit 1
+fi
+if ! grep -q "Fault injection triggered" "${failure_apply_log}"; then
+  echo "Fault injection message did not appear in relayed debug logs" >&2
   exit 1
 fi
 

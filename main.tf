@@ -9,47 +9,8 @@ locals {
     local.timeout_unit == "m" ? local.timeout_value * 60 : local.timeout_value * 3600
   )
   secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.managed_resources.secrets_yaml), 0, 12), 16) : 0
-}
 
-resource "kubernetes_namespace_v1" "this" {
-  metadata {
-    name = var.bootstrap_namespace
-  }
-}
-
-resource "kubernetes_secret_v1" "this" {
-  count = local.has_secrets_yaml ? 1 : 0
-
-  depends_on = [kubernetes_namespace_v1.this]
-
-  metadata {
-    name      = "flux-operator-bootstrap"
-    namespace = var.bootstrap_namespace
-  }
-
-  type = "Opaque"
-
-  data_wo = {
-    "secrets.yaml" = var.managed_resources.secrets_yaml
-  }
-
-  data_wo_revision = local.secrets_yaml_revision
-}
-
-resource "helm_release" "this" {
-  depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this]
-
-  name             = "flux-operator-bootstrap"
-  namespace        = var.bootstrap_namespace
-  chart            = "${path.module}/charts/flux-operator-bootstrap"
-  create_namespace = false
-  upgrade_install  = false
-  replace          = true
-  wait             = true
-  timeout          = local.timeout_seconds
-  max_history      = 5
-
-  values = [yamlencode({
+  helm_values_yaml = yamlencode({
     job = {
       image = {
         repository = var.job.image.repository
@@ -92,5 +53,79 @@ resource "helm_release" "this" {
     debugFaultInjectionMessage = var.debug_fault_injection_message
     debugFluxOperatorImageTag  = var.debug_flux_operator_image_tag
     revision                   = var.revision
-  })]
+  })
+  helm_values_hash = sha256(local.helm_values_yaml)
+}
+
+resource "kubernetes_namespace_v1" "this" {
+  metadata {
+    name = var.bootstrap_namespace
+  }
+}
+
+resource "kubernetes_secret_v1" "this" {
+  count = local.has_secrets_yaml ? 1 : 0
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  metadata {
+    name      = "flux-operator-bootstrap"
+    namespace = var.bootstrap_namespace
+  }
+
+  type = "Opaque"
+
+  data_wo = {
+    "secrets.yaml" = var.managed_resources.secrets_yaml
+  }
+
+  data_wo_revision = local.secrets_yaml_revision
+}
+
+resource "helm_release" "this" {
+  depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this]
+
+  name             = "flux-operator-bootstrap"
+  namespace        = var.bootstrap_namespace
+  chart            = "${path.module}/charts/flux-operator-bootstrap"
+  create_namespace = false
+  upgrade_install  = false
+  replace          = true
+  wait             = true
+  timeout          = local.timeout_seconds
+  max_history      = 5
+
+  values = [local.helm_values_yaml]
+}
+
+# null_resource.debug_on_failure polls the bootstrap Job and relays its
+# stdout/stderr to Terraform output when the Job fails. It depends on the
+# namespace and (optionally) the secret but NOT on helm_release, so that it
+# still runs when helm_release fails. Re-runs exactly when the Helm values
+# hash changes (which matches when helm_release itself will install/upgrade).
+# Both poll loops use the shared `timeout` input so there are no custom
+# timeouts to tune.
+resource "null_resource" "debug_on_failure" {
+  count = var.debug_on_failure ? 1 : 0
+
+  depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this]
+
+  triggers = {
+    values_hash = local.helm_values_hash
+  }
+
+  provisioner "local-exec" {
+    # `bash` rather than `/bin/sh` so the same script also works under Git Bash
+    # on Windows, where `/bin/sh` is not a stable absolute path but `bash` is on
+    # PATH (via Git for Windows). The script is read verbatim via file() and
+    # its dynamic inputs are passed through the environment so there is no
+    # Terraform templating and shell parameter expansion (${var}, ${var%%/*},
+    # etc.) works as expected.
+    interpreter = ["bash", "-c"]
+    command     = file("${path.module}/scripts/debug-relay.sh")
+    environment = {
+      BOOTSTRAP_NAMESPACE = var.bootstrap_namespace
+      TIMEOUT_SECONDS     = tostring(local.timeout_seconds)
+    }
+  }
 }
