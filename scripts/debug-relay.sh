@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# debug-relay.sh is executed by Terraform's null_resource.debug_on_failure via
+# debug-relay.sh is executed by Terraform's terraform_data.debug_on_failure via
 # `bash -c "$(file debug-relay.sh)"`. It polls the bootstrap Job and relays its
 # logs back to the Terraform apply output whenever the Job failed or never
 # reached a terminal state. The caller supplies these environment variables:

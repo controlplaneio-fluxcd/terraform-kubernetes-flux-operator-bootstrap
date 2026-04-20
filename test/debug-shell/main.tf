@@ -1,12 +1,5 @@
 terraform {
   required_version = ">= 1.11.0"
-
-  required_providers {
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.2"
-    }
-  }
 }
 
 # This root exercises the exact same local-exec script that the module ships
@@ -26,8 +19,8 @@ variable "timeout_seconds" {
   default = 30
 }
 
-resource "null_resource" "debug_on_failure" {
-  triggers = {
+resource "terraform_data" "debug_on_failure" {
+  triggers_replace = {
     # Re-run on every apply so successive smoke-test runs always exercise the
     # provisioner. The real module uses a content hash here.
     timestamp = timestamp()
