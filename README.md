@@ -514,7 +514,6 @@ module "flux_operator_bootstrap" {
   - `bash` must be on `PATH` — the `local-exec` provisioner calls `["bash", "-c", …]`. On Linux and macOS this is native `bash`; on Windows, `bash.exe` from [Git for Windows](https://gitforwindows.org/) (Git Bash) satisfies this
   - `kubectl` must be on `PATH`
   - `kubectl` must be configured with credentials for the target cluster (via `KUBECONFIG`, the default `~/.kube/config`, or any mechanism resolvable by `kubectl` in the same environment Terraform runs in)
-  - The `hashicorp/null` provider (~> 3.2) is a required provider of this module (retained for state cleanup of the legacy `null_resource.debug_on_failure`; will be removed in a follow-up release)
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources
 are reconciled with server-side apply and drift from manual `kubectl` changes
