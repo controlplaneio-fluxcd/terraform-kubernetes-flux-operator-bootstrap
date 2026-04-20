@@ -10,6 +10,13 @@ locals {
   )
   secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.managed_resources.secrets_yaml), 0, 12), 16) : 0
 
+  # The bootstrap chart's Job image tag is rendered from .Chart.Version (see
+  # charts/flux-operator-bootstrap/templates/_helpers.tpl). Include it in the
+  # values hash so debug_on_failure re-fires whenever a module-version-only
+  # bump triggers a helm_release upgrade (otherwise the new Job would run
+  # without log relay). Read from Chart.yaml so module bumps stay single-source.
+  bootstrap_chart_version = yamldecode(file("${path.module}/charts/flux-operator-bootstrap/Chart.yaml")).version
+
   helm_values_yaml = yamlencode({
     job = {
       image = {
@@ -54,7 +61,10 @@ locals {
     debugFluxOperatorImageTag  = var.debug_flux_operator_image_tag
     revision                   = var.revision
   })
-  helm_values_hash = sha256(local.helm_values_yaml)
+  # Mix the bootstrap chart version into the trigger hash so debug_on_failure
+  # re-fires on module-version-only upgrades. Kept out of helm_values_yaml so
+  # it isn't passed to Helm as an unrecognized value.
+  helm_values_hash = sha256("${local.bootstrap_chart_version}\n${local.helm_values_yaml}")
 }
 
 resource "kubernetes_namespace_v1" "this" {
