@@ -11,9 +11,9 @@ inventory_config_map_name="inventory"
 
 # Versions of third-party charts used across e2e tests.
 e2e_podinfo_version="6.11.2"
-e2e_cilium_version="1.19.2"
+e2e_cilium_version="1.19.3"
 e2e_spire_crds_version="0.5.0"
-e2e_spire_version="0.28.3"
+e2e_spire_version="0.28.4"
 
 _start_time="${EPOCHREALTIME/./}"
 _last_section_time="${_start_time}"
