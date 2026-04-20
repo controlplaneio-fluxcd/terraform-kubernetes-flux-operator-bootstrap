@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shell smoke test for the debug_on_failure null_resource. Validates that the
+# Shell smoke test for the debug_on_failure terraform_data resource. Validates that the
 # bash interpreter on the host (POSIX bash on Linux/macOS, Git Bash on Windows)
 # can run the local-exec template that the module ships
 # (scripts/debug-relay.sh.tpl) end to end. It does not need Docker, kind, or a

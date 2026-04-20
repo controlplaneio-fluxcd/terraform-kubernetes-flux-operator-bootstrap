@@ -41,7 +41,7 @@ fi
 
 note "Verifying debug logs were relayed to Terraform output"
 if ! grep -q "flux-operator-bootstrap job logs" "${failure_apply_log}"; then
-  echo "Debug null_resource did not relay job logs to Terraform output" >&2
+  echo "Debug terraform_data did not relay job logs to Terraform output" >&2
   exit 1
 fi
 if ! grep -q "DEBUG OUTPUT" "${failure_apply_log}"; then

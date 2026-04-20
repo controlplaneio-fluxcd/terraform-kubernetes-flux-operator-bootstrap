@@ -98,19 +98,19 @@ resource "helm_release" "this" {
   values = [local.helm_values_yaml]
 }
 
-# null_resource.debug_on_failure polls the bootstrap Job and relays its
+# terraform_data.debug_on_failure polls the bootstrap Job and relays its
 # stdout/stderr to Terraform output when the Job fails. It depends on the
 # namespace and (optionally) the secret but NOT on helm_release, so that it
 # still runs when helm_release fails. Re-runs exactly when the Helm values
 # hash changes (which matches when helm_release itself will install/upgrade).
 # Both poll loops use the shared `timeout` input so there are no custom
 # timeouts to tune.
-resource "null_resource" "debug_on_failure" {
+resource "terraform_data" "debug_on_failure" {
   count = var.debug_on_failure ? 1 : 0
 
   depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this]
 
-  triggers = {
+  triggers_replace = {
     values_hash = local.helm_values_hash
   }
 
