@@ -24,6 +24,9 @@ Migrating from the previous
 (`helm_release` for `flux-operator` + `helm_release` for `flux-instance`)? See the
 [migration guide](https://github.com/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap/blob/main/docs/migration-from-previous-approach.md).
 
+For a complete working example, see the
+[d2-fleet reference repository](https://github.com/controlplaneio-fluxcd/d2-fleet/tree/main/terraform).
+
 ## Overview
 
 The module creates a dedicated bootstrap namespace with a `Job` that:
@@ -76,6 +79,37 @@ module.
 
 ## Usage
 
+### Repository Layout
+
+The Terraform root module and the Flux manifests should live at the repo root as
+siblings. `clusters/` stays at the top level so Flux can reconcile it as the fleet
+source of truth, and the Terraform directory stays isolated to the bootstrap concern:
+
+```text
+repo/
+├── terraform/                             # Terraform root module
+│   ├── main.tf
+│   ├── providers.tf
+│   └── variables.tf
+└── clusters/
+    └── staging/                           # reconciled by Flux via FluxInstance.spec.sync.path
+        └── flux-system/
+            ├── flux-instance.yaml         # applied by the bootstrap Job
+            ├── flux-operator-values.yaml  # shared between Terraform and the Flux-managed HelmRelease
+            ├── flux-operator.yaml         # ResourceSet wrapping the Flux Operator HelmRelease
+            ├── runtime-info.yaml          # Git-managed fields of flux-runtime-info (optional)
+            └── kustomization.yaml         # configMapGenerator for flux-operator-values
+```
+
+Because the Terraform root is a subdirectory, reach up with `${path.root}/..` when
+loading manifests, and parameterize the cluster name via a `cluster_name` variable so
+the same module definition works across different clusters.
+
+Set `FluxInstance.spec.sync.path` to `clusters/${var.cluster_name}` so Flux reconciles
+the same directory after bootstrap.
+
+### Example
+
 ```hcl
 locals {
   ghcr_auth_dockerconfigjson = jsonencode({
@@ -110,10 +144,10 @@ module "flux_operator_bootstrap" {
   revision = var.bootstrap_revision
 
   gitops_resources = {
-    instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
+    instance_yaml = file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-instance.yaml")
     prerequisites = {
       yamls = [
-        file("${path.root}/clusters/staging/flux-system/eks-nodepools.yaml"),
+        file("${path.root}/../clusters/${var.cluster_name}/flux-system/eks-nodepools.yaml"),
       ]
     }
   }
@@ -133,7 +167,7 @@ module "flux_operator_bootstrap" {
         "reconcile.fluxcd.io/watch" = "Enabled"
       }
       data = {
-        cluster_name   = "staging"
+        cluster_name   = var.cluster_name
         cluster_region = "eu-west-2"
       }
     }
@@ -210,24 +244,6 @@ module "flux_operator_bootstrap" {
   version    = "0.4.0"
   revision   = 1
   # ...
-}
-```
-
-### Root module subdirectory
-
-If your Terraform root module lives below the Git repo root, anchor manifest
-paths with `path.root`, for example:
-
-```text
-repo/
-├── clusters/staging/flux-system/flux-instance.yaml
-└── .aws/terraform/
-    └── main.tf  # path.root
-```
-
-```hcl
-gitops_resources = {
-  instance_yaml = file("${path.root}/../../clusters/staging/flux-system/flux-instance.yaml")
 }
 ```
 
@@ -423,7 +439,7 @@ module "flux_operator_bootstrap" {
     # ...
     operator_chart = {
       values_yaml = yamlencode(merge(
-        yamldecode(file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")),
+        yamldecode(file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-operator-values.yaml")),
         { web = { enabled = false } },
       ))
     }
@@ -439,7 +455,7 @@ When no overrides are needed, pass the file directly:
 
 ```hcl
     operator_chart = {
-      values_yaml = file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")
+      values_yaml = file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-operator-values.yaml")
     }
 ```
 
