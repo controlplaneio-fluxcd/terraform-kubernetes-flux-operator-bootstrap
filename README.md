@@ -125,16 +125,16 @@ locals {
 
 provider "helm" {
   kubernetes = {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
+    host                   = var.cluster_endpoint
+    cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
+    token                  = var.cluster_token
   }
 }
 
 provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
+  host                   = var.cluster_endpoint
+  cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
+  token                  = var.cluster_token
 }
 
 module "flux_operator_bootstrap" {
@@ -147,7 +147,7 @@ module "flux_operator_bootstrap" {
     instance_yaml = file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-instance.yaml")
     prerequisites = {
       yamls = [
-        file("${path.root}/../clusters/${var.cluster_name}/flux-system/eks-nodepools.yaml"),
+        file("${path.root}/../clusters/${var.cluster_name}/flux-system/nodepools.yaml"),
       ]
     }
   }
@@ -221,31 +221,35 @@ The module can be used in the same Terraform root module that creates the
 cluster, with provider configuration referencing the cluster module's outputs:
 
 ```hcl
-module "eks" {
-  source = "terraform-aws-modules/eks/aws"
+module "cluster" {
+  # Any Kubernetes cluster module (EKS, GKE, AKS, etc.) that exposes
+  # the endpoint, CA certificate, and an authentication token or exec
+  # credential plugin config as outputs.
+  source = "..."
   # ...
 }
 
 provider "helm" {
   kubernetes = {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-    exec = {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-    }
+    host                   = module.cluster.endpoint
+    cluster_ca_certificate = base64decode(module.cluster.ca_certificate)
+    token                  = module.cluster.token
   }
 }
 
 module "flux_operator_bootstrap" {
-  depends_on = [module.eks]
+  depends_on = [module.cluster]
   source     = "controlplaneio-fluxcd/flux-operator-bootstrap/kubernetes"
   version    = "0.4.0"
   revision   = 1
   # ...
 }
 ```
+
+When the cloud provider requires a credential plugin instead of a static
+token (for example, AWS IAM or GCP IAM), configure the provider's `exec`
+block with the corresponding CLI — `aws eks get-token`,
+`gke-gcloud-auth-plugin`, `kubelogin` for AKS, etc.
 
 ### Node scheduling
 
@@ -473,8 +477,8 @@ content to detect changes — the actual YAML never appears in the state file.
 This is verified by end-to-end tests.
 
 ```hcl
-data "aws_secretsmanager_secret_version" "git_credentials" {
-  secret_id = "flux/staging/git-credentials"
+data "vault_generic_secret" "git_credentials" {
+  path = "secret/flux/staging/git-credentials"
 }
 
 module "flux_operator_bootstrap" {
@@ -488,11 +492,15 @@ module "flux_operator_bootstrap" {
         name: git-credentials
       type: Opaque
       stringData:
-        password: '${data.aws_secretsmanager_secret_version.git_credentials.secret_string}'
+        password: '${data.vault_generic_secret.git_credentials.data["password"]}'
     YAML
   }
 }
 ```
+
+The same pattern works with `aws_secretsmanager_secret_version`,
+`google_secret_manager_secret_version`, `azurerm_key_vault_secret`, or any
+other `data` source that returns a secret value.
 
 ## Inputs
 
