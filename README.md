@@ -24,6 +24,9 @@ Migrating from the previous
 (`helm_release` for `flux-operator` + `helm_release` for `flux-instance`)? See the
 [migration guide](https://github.com/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap/blob/main/docs/migration-from-previous-approach.md).
 
+For a complete working example, see the
+[d2-fleet reference repository](https://github.com/controlplaneio-fluxcd/d2-fleet/tree/main/terraform).
+
 ## Overview
 
 The module creates a dedicated bootstrap namespace with a `Job` that:
@@ -76,6 +79,37 @@ module.
 
 ## Usage
 
+### Repository Layout
+
+The Terraform root module and the Flux manifests should live at the repo root as
+siblings. `clusters/` stays at the top level so Flux can reconcile it as the fleet
+source of truth, and the Terraform directory stays isolated to the bootstrap concern:
+
+```text
+repo/
+├── terraform/                             # Terraform root module
+│   ├── main.tf
+│   ├── providers.tf
+│   └── variables.tf
+└── clusters/
+    └── staging/                           # reconciled by Flux via FluxInstance.spec.sync.path
+        └── flux-system/
+            ├── flux-instance.yaml         # applied by the bootstrap Job
+            ├── flux-operator-values.yaml  # shared between Terraform and the Flux-managed HelmRelease
+            ├── flux-operator.yaml         # ResourceSet wrapping the Flux Operator HelmRelease
+            ├── runtime-info.yaml          # Git-managed fields of flux-runtime-info (optional)
+            └── kustomization.yaml         # configMapGenerator for flux-operator-values
+```
+
+Because the Terraform root is a subdirectory, reach up with `${path.root}/..` when
+loading manifests, and parameterize the cluster name via a `cluster_name` variable so
+the same module definition works across different clusters.
+
+Set `FluxInstance.spec.sync.path` to `clusters/${var.cluster_name}` so Flux reconciles
+the same directory after bootstrap.
+
+### Example
+
 ```hcl
 locals {
   ghcr_auth_dockerconfigjson = jsonencode({
@@ -91,16 +125,16 @@ locals {
 
 provider "helm" {
   kubernetes = {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
+    host                   = var.cluster_endpoint
+    cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
+    token                  = var.cluster_token
   }
 }
 
 provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
+  host                   = var.cluster_endpoint
+  cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
+  token                  = var.cluster_token
 }
 
 module "flux_operator_bootstrap" {
@@ -110,10 +144,10 @@ module "flux_operator_bootstrap" {
   revision = var.bootstrap_revision
 
   gitops_resources = {
-    instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
+    instance_yaml = file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-instance.yaml")
     prerequisites = {
       yamls = [
-        file("${path.root}/clusters/staging/flux-system/eks-nodepools.yaml"),
+        file("${path.root}/../clusters/${var.cluster_name}/flux-system/nodepools.yaml"),
       ]
     }
   }
@@ -133,7 +167,7 @@ module "flux_operator_bootstrap" {
         "reconcile.fluxcd.io/watch" = "Enabled"
       }
       data = {
-        cluster_name   = "staging"
+        cluster_name   = var.cluster_name
         cluster_region = "eu-west-2"
       }
     }
@@ -187,25 +221,24 @@ The module can be used in the same Terraform root module that creates the
 cluster, with provider configuration referencing the cluster module's outputs:
 
 ```hcl
-module "eks" {
-  source = "terraform-aws-modules/eks/aws"
+module "cluster" {
+  # Any Kubernetes cluster module (EKS, GKE, AKS, etc.) that exposes
+  # the endpoint, CA certificate, and an authentication token or exec
+  # credential plugin config as outputs.
+  source = "..."
   # ...
 }
 
 provider "helm" {
   kubernetes = {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-    exec = {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-    }
+    host                   = module.cluster.endpoint
+    cluster_ca_certificate = base64decode(module.cluster.ca_certificate)
+    token                  = module.cluster.token
   }
 }
 
 module "flux_operator_bootstrap" {
-  depends_on = [module.eks]
+  depends_on = [module.cluster]
   source     = "controlplaneio-fluxcd/flux-operator-bootstrap/kubernetes"
   version    = "0.4.0"
   revision   = 1
@@ -213,23 +246,10 @@ module "flux_operator_bootstrap" {
 }
 ```
 
-### Root module subdirectory
-
-If your Terraform root module lives below the Git repo root, anchor manifest
-paths with `path.root`, for example:
-
-```text
-repo/
-├── clusters/staging/flux-system/flux-instance.yaml
-└── .aws/terraform/
-    └── main.tf  # path.root
-```
-
-```hcl
-gitops_resources = {
-  instance_yaml = file("${path.root}/../../clusters/staging/flux-system/flux-instance.yaml")
-}
-```
+When the cloud provider requires a credential plugin instead of a static
+token (for example, AWS IAM or GCP IAM), configure the provider's `exec`
+block with the corresponding CLI — `aws eks get-token`,
+`gke-gcloud-auth-plugin`, `kubelogin` for AKS, etc.
 
 ### Node scheduling
 
@@ -423,7 +443,7 @@ module "flux_operator_bootstrap" {
     # ...
     operator_chart = {
       values_yaml = yamlencode(merge(
-        yamldecode(file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")),
+        yamldecode(file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-operator-values.yaml")),
         { web = { enabled = false } },
       ))
     }
@@ -439,7 +459,7 @@ When no overrides are needed, pass the file directly:
 
 ```hcl
     operator_chart = {
-      values_yaml = file("${path.root}/../../clusters/staging/flux-system/flux-operator-values.yaml")
+      values_yaml = file("${path.root}/../clusters/${var.cluster_name}/flux-system/flux-operator-values.yaml")
     }
 ```
 
@@ -457,8 +477,8 @@ content to detect changes — the actual YAML never appears in the state file.
 This is verified by end-to-end tests.
 
 ```hcl
-data "aws_secretsmanager_secret_version" "git_credentials" {
-  secret_id = "flux/staging/git-credentials"
+data "vault_generic_secret" "git_credentials" {
+  path = "secret/flux/staging/git-credentials"
 }
 
 module "flux_operator_bootstrap" {
@@ -472,11 +492,15 @@ module "flux_operator_bootstrap" {
         name: git-credentials
       type: Opaque
       stringData:
-        password: '${data.aws_secretsmanager_secret_version.git_credentials.secret_string}'
+        password: '${data.vault_generic_secret.git_credentials.data["password"]}'
     YAML
   }
 }
 ```
+
+The same pattern works with `aws_secretsmanager_secret_version`,
+`google_secret_manager_secret_version`, `azurerm_key_vault_secret`, or any
+other `data` source that returns a secret value.
 
 ## Inputs
 
