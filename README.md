@@ -19,6 +19,11 @@ Migrating from the [fluxcd/flux](https://registry.terraform.io/providers/fluxcd/
 Terraform provider? See the
 [migration guide](https://github.com/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap/blob/main/docs/migration-from-flux-provider.md).
 
+Migrating from the previous
+[flux-operator Terraform example](https://github.com/controlplaneio-fluxcd/flux-operator/blob/v0.46.0/config/terraform/main.tf)
+(`helm_release` for `flux-operator` + `helm_release` for `flux-instance`)? See the
+[migration guide](https://github.com/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap/blob/main/docs/migration-from-previous-approach.md).
+
 ## Overview
 
 The module creates a dedicated bootstrap namespace with a `Job` that:
