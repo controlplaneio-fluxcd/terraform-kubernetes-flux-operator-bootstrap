@@ -6,7 +6,7 @@ job:
   affinity: {}
   tolerations: []
   hostNetwork: false
-  env: []
+  env: {}
 
 gitopsResources:
   instance: ""
