@@ -74,6 +74,9 @@ spec:
         - name: RUNTIME_INFO_CONFIG_MAP_NAME
           value: flux-runtime-info
 {{- end }}
+{{- with .Values.job.env }}
+        {{- toYaml . | nindent 8 }}
+{{- end }}
         volumeMounts:
         - name: bootstrap-manifest
           mountPath: /bootstrap
