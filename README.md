@@ -538,6 +538,7 @@ other `data` source that returns a secret value.
   - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
   - `job.host_network` (`Default: false`): run the bootstrap job with host networking; required when the job must install a CNI plugin (e.g. Cilium) since pod networking is unavailable until the CNI is running
+  - `job.env` (`Default: {}`): additional environment variables to pass to the bootstrap job container, for example to configure proxy settings.
 - `timeout` (`Default: "10m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 - `debug_on_failure` (`Default: false`): when true, creates a `terraform_data` resource that polls the bootstrap `Job` and relays its logs to Terraform output when the `Job` fails or never reaches a terminal state. The `terraform_data` resource runs in parallel with `helm_release` and only triggers when `helm_release` will install or upgrade (i.e. on inputs change or `revision` bump). Requirements on the Terraform execution environment:
   - `bash` must be on `PATH` — the `local-exec` provisioner calls `["bash", "-c", …]`. On Linux and macOS this is native `bash`; on Windows, `bash.exe` from [Git for Windows](https://gitforwindows.org/) (Git Bash) satisfies this
