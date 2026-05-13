@@ -83,7 +83,7 @@ variable "job" {
     })
     tolerations  = optional(list(any), [])
     host_network = optional(bool, false)
-    job          = optional(map(string), {})
+    env          = optional(map(string), {})
   })
   default  = {}
   nullable = false
