@@ -77,7 +77,7 @@ spec:
 {{- if .Values.job.env }}
 {{- range $key, $value := .Values.job.env }}
         - name: {{ $key }}
-          value: {{ $value }}
+          value: {{ $value | quote }}
 {{- end }}
 {{- end }}
         volumeMounts:
