@@ -44,3 +44,11 @@ e2e-critical-components:
 .PHONY: e2e-debug-shell
 e2e-debug-shell:
 	bash ./scripts/e2e-debug-shell.sh 2>&1 | tee e2e-debug-shell.log
+
+# e2e-offline-plan proves that `terraform plan` succeeds without cluster
+# connectivity, so the module can live in the same root module that creates
+# the cluster. No Docker or kind needed — the providers are pointed at an
+# unreachable endpoint.
+.PHONY: e2e-offline-plan
+e2e-offline-plan:
+	stdbuf -oL -eL bash ./scripts/e2e-offline-plan.sh 2>&1 | tee e2e-offline-plan.log
