@@ -10,6 +10,10 @@ permissions:
 
 jobs:
   e2e-pending:
+    # Fork PRs don't have write access to the statuses API, so skip the
+    # commit-status updates entirely. The e2e aggregate job still enforces
+    # pass/fail via its Verify result step.
+    if: github.event.pull_request.head.repo.fork != true
     runs-on: ubuntu-latest
     steps:
       - name: Set pending status on PR
@@ -130,6 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Update status on PR
+        if: github.event.pull_request.head.repo.fork != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
