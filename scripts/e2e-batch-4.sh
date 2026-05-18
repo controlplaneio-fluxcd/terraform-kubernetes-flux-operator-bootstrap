@@ -21,12 +21,25 @@ kind delete cluster --name "${cluster_name}" 2>/dev/null || true
 
 section "Helm Release Unlock"
 note "Rendering unlock scenario with working config for initial setup"
-render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one"
+# Pass job.env on the initial render so we can also assert the env-var
+# feature end-to-end (commit 483215e). The values flow through to the
+# bootstrap Job's container spec via the chart template.
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "" 1 "" "5m" "" "" "false" \
+  '{ E2E_BOOTSTRAP_ENV_KEY = "e2e-bootstrap-env-value" }'
 note "Initializing unlock scenario"
 terraform -chdir="${unlock_tf_dir}" init -no-color -backend=false
 note "Running initial apply to install flux-operator"
 terraform -chdir="${unlock_tf_dir}" apply -no-color -auto-approve
 assert_flux_runtime_ready
+
+note "Verifying job.env is propagated to the bootstrap Job container"
+job_env_value="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-unlock get job flux-operator-bootstrap \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="E2E_BOOTSTRAP_ENV_KEY")].value}')"
+if [ "${job_env_value}" != "e2e-bootstrap-env-value" ]; then
+  echo "Bootstrap Job container did not receive expected env var from job.env" >&2
+  echo "Expected: e2e-bootstrap-env-value, Got: ${job_env_value}" >&2
+  exit 1
+fi
 
 note "Uninstalling flux-operator to set up unlock test"
 helm --kube-context "kind-${cluster_name}" delete flux-operator -n flux-system --no-hooks || true
