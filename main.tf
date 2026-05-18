@@ -26,6 +26,7 @@ locals {
       affinity    = var.job.affinity
       tolerations = var.job.tolerations
       hostNetwork = var.job.host_network
+      env         = var.job.env
     }
     gitopsResources = {
       instance = local.flux_instance_yaml

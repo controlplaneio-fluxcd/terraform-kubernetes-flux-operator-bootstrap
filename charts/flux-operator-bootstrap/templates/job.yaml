@@ -74,6 +74,12 @@ spec:
         - name: RUNTIME_INFO_CONFIG_MAP_NAME
           value: flux-runtime-info
 {{- end }}
+{{- if .Values.job.env }}
+{{- range $key, $value := .Values.job.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+{{- end }}
+{{- end }}
         volumeMounts:
         - name: bootstrap-manifest
           mountPath: /bootstrap
