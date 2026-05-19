@@ -175,6 +175,7 @@ render_root_module() {
   operator_values="${9:-}"
   prerequisite_charts="${10:-}"
   debug_on_failure="${11:-false}"
+  job_env="${12:-}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -338,6 +339,11 @@ cat <<'JOBEOF'
       effect   = "NoSchedule"
     }]
 JOBEOF
+fi)
+$(if [ -n "${job_env}" ]; then
+cat <<ENVEOF
+    env = ${job_env}
+ENVEOF
 fi)
   }
 

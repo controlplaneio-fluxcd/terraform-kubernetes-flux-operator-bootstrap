@@ -56,8 +56,8 @@ The bootstrap `Job` re-runs when any input content changes or when the
 `revision` input is bumped. When all inputs are unchanged, `terraform plan`
 shows zero diff.
 
-The module does not require cluster connectivity during planning, so it can be
-used in the same Terraform root module that creates the cluster.
+**The module does not require cluster connectivity during planning, so it can be
+used in the same Terraform root module that creates the cluster.**
 
 `gitops_resources` are resources meant to be reconciled by Flux after bootstrap,
 such as the `FluxInstance` manifest and scheduling prerequisites (e.g. Karpenter
