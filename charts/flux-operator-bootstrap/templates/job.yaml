@@ -3,9 +3,16 @@ kind: Job
 metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
+{{- with .Values.commonMetadata.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
+{{- range $key, $value := .Values.commonMetadata.annotations }}
+    {{ $key | quote }}: {{ $value | quote }}
+{{- end }}
 spec:
   backoffLimit: 0
   template:
@@ -55,6 +62,12 @@ spec:
 {{- if .Values.gitopsResources.prerequisites.charts }}
         - name: PREREQUISITE_CHARTS_FILE
           value: /bootstrap/prerequisite-charts.json
+{{- end }}
+{{- if or .Values.commonMetadata.labels .Values.commonMetadata.annotations }}
+        - name: COMMON_METADATA_LABELS_FILE
+          value: /bootstrap/common-metadata-labels.env
+        - name: COMMON_METADATA_ANNOTATIONS_FILE
+          value: /bootstrap/common-metadata-annotations.env
 {{- end }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}

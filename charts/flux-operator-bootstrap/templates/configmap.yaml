@@ -26,6 +26,16 @@ data:
 {{- end }}
 {{- end }}
 {{- end }}
+{{- if or .Values.commonMetadata.labels .Values.commonMetadata.annotations }}
+  common-metadata-labels.env: |
+{{- range $key, $value := .Values.commonMetadata.labels }}
+    {{ $key }}={{ $value }}
+{{- end }}
+  common-metadata-annotations.env: |
+{{- range $key, $value := .Values.commonMetadata.annotations }}
+    {{ $key }}={{ $value }}
+{{- end }}
+{{- end }}
 {{- if .Values.managedResources.runtimeInfo.data }}
   runtime-info.env: |
 {{- range $key, $value := .Values.managedResources.runtimeInfo.data }}

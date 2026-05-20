@@ -28,6 +28,10 @@ locals {
       hostNetwork = var.job.host_network
       env         = var.job.env
     }
+    commonMetadata = {
+      labels      = var.common_metadata.labels
+      annotations = var.common_metadata.annotations
+    }
     gitopsResources = {
       instance = local.flux_instance_yaml
       prerequisites = {
@@ -70,7 +74,9 @@ locals {
 
 resource "kubernetes_namespace_v1" "this" {
   metadata {
-    name = var.bootstrap_namespace
+    name        = var.bootstrap_namespace
+    labels      = var.common_metadata.labels
+    annotations = var.common_metadata.annotations
   }
 }
 

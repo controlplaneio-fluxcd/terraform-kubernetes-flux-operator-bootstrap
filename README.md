@@ -41,7 +41,14 @@ The module creates a dedicated bootstrap namespace with a `Job` that:
   create-if-missing semantics; with `flux_adoption_check`, uses the full
   unlock/recover/upgrade flow (same as the Flux Operator chart) and skips
   charts already adopted by Flux
-- creates the `FluxInstance` target namespace if missing
+- creates the `FluxInstance` target namespace if missing, with the
+  [`common_metadata`](#common-metadata-on-created-namespaces) labels/annotations
+  applied at creation time
+- applies the `common_metadata` labels and annotations at creation time to the
+  namespaces it creates (the target namespace and prerequisite chart namespaces
+  with `create_namespace = true`), reconciling them on later runs until Flux
+  adopts the namespace, then handing off (the bootstrap namespace itself is
+  stamped by Terraform)
 - reconciles managed resources (secrets and runtime-info `ConfigMap`) into the
   target namespace with server-side apply, correcting drift from manual changes;
   tracks them in an inventory and garbage-collects removed entries
@@ -76,6 +83,39 @@ patch the generated Flux `Kustomization` (from `.spec.sync`) with
 
 Callers must configure the HashiCorp Helm and Kubernetes providers for the
 module.
+
+## Flux ownership and hand-off
+
+The bootstrap is designed to bring the cluster to a state where Flux can take
+over, then get out of the way. The resources it applies use **create-if-missing**
+semantics, and once Flux adopts a resource the bootstrap stops touching it on
+subsequent runs so it never fights Flux's reconciliation. This hand-off applies
+across the module:
+
+- prerequisite manifests — re-applied only until adopted
+- prerequisite Helm charts — re-applied/upgraded only until adopted (when a
+  `flux_adoption_check` is configured)
+- the Flux Operator Helm release — upgraded only until adopted
+- the `FluxInstance` manifest — re-applied only until adopted
+- the namespaces stamped via [`common_metadata`](#common-metadata-on-created-namespaces)
+  — re-stamped only until adopted
+
+A resource or namespace is considered adopted once it carries a Flux ownership
+label:
+
+| Ownership label | Applied by |
+| --- | --- |
+| `kustomize.toolkit.fluxcd.io/name` | Flux kustomize-controller |
+| `helm.toolkit.fluxcd.io/name` | Flux helm-controller |
+| `fluxcd.controlplane.io/name` | Flux Operator (`FluxInstance`) |
+| `resourceset.fluxcd.controlplane.io/name` | Flux Operator (`ResourceSet`) |
+
+The create-if-missing flows for prerequisite manifests, Helm charts, the Flux
+Operator release, and the `FluxInstance` check for the two Flux controller labels
+(`kustomize.toolkit.fluxcd.io/name` and `helm.toolkit.fluxcd.io/name`). Namespace
+metadata managed via `common_metadata` additionally recognizes the two Flux
+Operator labels, since a namespace can be owned by a `FluxInstance` or a
+`ResourceSet`.
 
 ## Usage
 
@@ -335,6 +375,72 @@ spec:
                 effect: NoSchedule
 ```
 
+### Common metadata on created namespaces
+
+Use `common_metadata` to set labels and annotations on the bootstrap `Job` and
+on the namespaces the module creates — the bootstrap namespace, the
+`FluxInstance` target namespace, and any namespace created for a prerequisite
+chart with `create_namespace = true`. This is useful for landing namespaces in
+the right place (e.g. Rancher Projects), satisfying cloud-provider or admission
+policies, and avoiding drift-detection noise from labels expected on every
+namespace.
+
+```hcl
+module "flux_operator_bootstrap" {
+  # ...
+
+  common_metadata = {
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+    annotations = {
+      "field.cattle.io/projectId" = "p-abcde"
+    }
+  }
+}
+```
+
+For namespaces, the labels and annotations are written into the `Namespace`
+object so they are present **at creation time** — admission policies that require
+specific namespace metadata reject namespaces created without it. They are then
+reconciled on every bootstrap run with server-side apply, so they stay in sync
+and drift is corrected without removing labels or annotations owned by others.
+Namespaces with `create_namespace = false` are owned by the user and are never
+touched.
+
+Like the rest of the module, `common_metadata` follows the
+[Flux ownership and hand-off](#flux-ownership-and-hand-off) rule: it keeps a
+namespace stamped on every run — which is what makes it useful for drift
+correction (e.g. a cloud provider re-adding a label, or Rancher Project
+annotations being stripped) — but stops touching the namespace once Flux adopts
+it. After adoption, manage the namespace's metadata from the Flux source that
+owns it (e.g. the namespace manifest in your Git/OCI source, or the
+`.spec.commonMetadata` of the `FluxInstance` / `ResourceSet` that manages it).
+
+#### The FluxInstance target namespace
+
+The `FluxInstance` target namespace (e.g. `flux-system`) is created with the
+`common_metadata` like any other namespace, so it satisfies admission at creation
+time. Afterwards it is a special case: once the flux-operator installs Flux it
+adopts the namespace (stamping it with the `fluxcd.controlplane.io/name` ownership
+label) and reconciles its metadata, pruning anything it does not own. The
+bootstrap then hands off on subsequent runs. So `common_metadata` only covers
+this namespace at creation; for its steady-state metadata set the `FluxInstance`'s
+own `.spec.commonMetadata`, which the operator applies to every resource it
+manages, including that namespace:
+
+```yaml
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  commonMetadata:
+    labels:
+      app.kubernetes.io/managed-by: flux
+```
+
 ### Operator values from a local file
 
 When the Flux Operator `HelmRelease` is managed by Flux after bootstrap, its
@@ -532,6 +638,9 @@ other `data` source that returns a secret value.
   - `managed_resources.runtime_info.labels` (`Default: {}`): labels to set on the ConfigMap
   - `managed_resources.runtime_info.annotations` (`Default: {}`): annotations to set on the ConfigMap
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
+- `common_metadata` (`Default: {}`): labels and annotations applied to the bootstrap `Job` and to the namespaces the module creates — the bootstrap namespace, the `FluxInstance` target namespace, and any prerequisite chart namespace created with `create_namespace = true`. The metadata is written into each namespace **at creation time** (so admission policies that require it accept the namespace) and reconciled on later runs, until Flux adopts the namespace (kustomize-controller, helm-controller, `FluxInstance`, or `ResourceSet` ownership labels), after which the bootstrap hands off. Because the flux-operator owns the `FluxInstance` target namespace once Flux is installed, set that namespace's steady-state metadata via the `FluxInstance`'s `.spec.commonMetadata` to match
+  - `common_metadata.labels` (`Default: {}`): labels to set on those resources
+  - `common_metadata.annotations` (`Default: {}`): annotations to set on those resources
 - `job` (`Default: {}`): bootstrap job settings
   - `job.image.repository` (`Default: "ghcr.io/controlplaneio-fluxcd/flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
   - `job.image.pull_policy` (`Default: "IfNotPresent"`): image pull policy

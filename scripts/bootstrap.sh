@@ -26,6 +26,14 @@ runtime_info_labels_file="${RUNTIME_INFO_LABELS_FILE:-}"
 runtime_info_annotations_file="${RUNTIME_INFO_ANNOTATIONS_FILE:-}"
 runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-flux-runtime-info}"
 
+# Common metadata files (key=value per line) written into the Namespace objects
+# this script creates (the FluxInstance target namespace and prerequisite chart
+# namespaces with create_namespace=true) so the labels/annotations are present at
+# creation time. Namespaces already adopted by Flux are left untouched. The
+# bootstrap namespace is handled by Terraform.
+common_metadata_labels_file="${COMMON_METADATA_LABELS_FILE:-}"
+common_metadata_annotations_file="${COMMON_METADATA_ANNOTATIONS_FILE:-}"
+
 # Prerequisite Helm charts JSON manifest (list of {name, repository, version, namespace}).
 prerequisite_charts_file="${PREREQUISITE_CHARTS_FILE:-}"
 
@@ -133,6 +141,81 @@ validate_flux_instance_file() {
     fail "FluxInstance manifest ${flux_instance_file} must have kind FluxInstance, got ${manifest_kind:-<unknown>}"
     return 1
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Common metadata
+# ---------------------------------------------------------------------------
+
+# namespace_adopted_by_flux returns 0 if a namespace has been adopted/managed by
+# Flux. It looks for the ownership labels of all four controllers that can take
+# over a namespace:
+#   - kustomize.toolkit.fluxcd.io/name      (Flux kustomize-controller)
+#   - helm.toolkit.fluxcd.io/name           (Flux helm-controller)
+#   - fluxcd.controlplane.io/name           (Flux Operator FluxInstance; e.g. it
+#                                            stamps and reconciles the target
+#                                            namespace's metadata)
+#   - resourceset.fluxcd.controlplane.io/name (Flux Operator ResourceSet)
+# Once a namespace is adopted the bootstrap stops touching its common metadata to
+# avoid fighting Flux for ownership (mirrors the create-if-missing/hand-off
+# pattern used elsewhere). $1: namespace name.
+namespace_adopted_by_flux() {
+  ns="$1"
+  label_keys="$(kubectl get namespace "${ns}" \
+    -o go-template='{{range $k, $v := .metadata.labels}}{{$k}} {{end}}' 2>/dev/null || true)"
+  case "${label_keys}" in
+    *kustomize.toolkit.fluxcd.io/name*) return 0 ;;
+    *helm.toolkit.fluxcd.io/name*) return 0 ;;
+    *resourceset.fluxcd.controlplane.io/name*) return 0 ;;
+    *fluxcd.controlplane.io/name*) return 0 ;;
+  esac
+  return 1
+}
+
+# ensure_namespace makes sure a namespace the module is responsible for exists,
+# carrying the configured common metadata. The labels and annotations are written
+# into the Namespace object and applied together so they are present at creation
+# time: admission policies that require specific namespace metadata reject a
+# namespace created without it, so a bare create followed by a patch
+# (kubectl label/annotate) is not safe. The namespace is reconciled with
+# server-side apply on every run, so a changed common_metadata is applied to a
+# namespace that exists but is not yet adopted, and drift is corrected — without
+# removing labels/annotations owned by others. Namespaces already adopted by Flux
+# are left untouched so the bootstrap hands off ownership instead of fighting
+# Flux's reconciliation. $1: namespace name.
+# Reads: common_metadata_labels_file, common_metadata_annotations_file,
+#        scratch_dir, ssa_field_manager.
+ensure_namespace() {
+  target_namespace="$1"
+
+  if namespace_adopted_by_flux "${target_namespace}"; then
+    log "- skip common metadata on namespace ${target_namespace} (managed by Flux)"
+    return 0
+  fi
+
+  # Build a Namespace manifest carrying the common metadata (if any) so the
+  # labels and annotations exist at creation time, then create-or-reconcile it.
+  ns_manifest="${scratch_dir}/namespace-${target_namespace}.yaml"
+  printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' "${target_namespace}" > "${ns_manifest}"
+
+  if [ -n "${common_metadata_labels_file}" ] && [ -f "${common_metadata_labels_file}" ] && [ -s "${common_metadata_labels_file}" ]; then
+    printf '  labels:\n' >> "${ns_manifest}"
+    while IFS="=" read -r key value; do
+      [ -z "${key}" ] && continue
+      printf '    %s: "%s"\n' "${key}" "${value}" >> "${ns_manifest}"
+    done < "${common_metadata_labels_file}"
+  fi
+
+  if [ -n "${common_metadata_annotations_file}" ] && [ -f "${common_metadata_annotations_file}" ] && [ -s "${common_metadata_annotations_file}" ]; then
+    printf '  annotations:\n' >> "${ns_manifest}"
+    while IFS="=" read -r key value; do
+      [ -z "${key}" ] && continue
+      printf '    %s: "%s"\n' "${key}" "${value}" >> "${ns_manifest}"
+    done < "${common_metadata_annotations_file}"
+  fi
+
+  log "= namespace ${target_namespace}"
+  kubectl apply --server-side --force-conflicts --field-manager="${ssa_field_manager}" -f "${ns_manifest}" >/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1071,15 @@ if [ -n "${prerequisite_charts_file}" ] && [ -f "${prerequisite_charts_file}" ];
     chart_namespace="$(yq -r ".[$i].namespace" "${prerequisite_charts_file}")"
     chart_create_namespace="$(yq -r ".[$i].createNamespace // true" "${prerequisite_charts_file}")"
 
+    # When the module owns the chart's namespace (create_namespace=true), create
+    # it up front carrying the common metadata so the labels/annotations are
+    # present at creation time (Helm's --create-namespace would otherwise make it
+    # bare and admission policies could reject it). Runs before the chart install
+    # so the namespace already exists by the time Helm reconciles into it.
+    if [ "${chart_create_namespace}" = "true" ]; then
+      ensure_namespace "${chart_namespace}"
+    fi
+
     # Use the substituted values file from scratch if it exists, otherwise
     # fall back to the original from the ConfigMap mount.
     values_file=""
@@ -1048,13 +1140,14 @@ else
   log "No prerequisite charts"
 fi
 
-# 4. Ensure target namespace exists
-if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-  log "Namespace exists: ${namespace}"
-else
-  log "Create namespace: ${namespace}"
-  kubectl create namespace "${namespace}" >/dev/null
-fi
+# 4. Ensure target namespace exists, carrying the common metadata at creation
+# time so admission policies that require namespace metadata accept it. The
+# flux-operator adopts and reconciles this namespace once it installs Flux, so on
+# subsequent runs ensure_namespace detects the ownership label and hands off; from
+# then on the FluxInstance's .spec.commonMetadata is the source of truth for its
+# steady-state metadata.
+log "Target namespace"
+ensure_namespace "${namespace}"
 
 # 5. Reconcile managed resources (secrets, runtime info) with SSA
 log "Managed resources"
