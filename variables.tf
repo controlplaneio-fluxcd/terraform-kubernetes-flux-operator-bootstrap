@@ -61,6 +61,16 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
+variable "common_metadata" {
+  description = "Labels and annotations applied to the bootstrap Job and to the namespaces the module creates: the bootstrap namespace, the FluxInstance target namespace, and any prerequisite chart namespace created with create_namespace = true. The metadata is written into each namespace at creation time (so admission policies that require it accept the namespace) and reconciled on later runs, until Flux adopts the namespace (kustomize-controller, helm-controller, FluxInstance, or ResourceSet ownership labels), after which the bootstrap hands off and stops modifying it. Because the flux-operator owns the FluxInstance target namespace once Flux is installed, set that namespace's steady-state metadata via the FluxInstance's .spec.commonMetadata to match."
+  type = object({
+    labels      = optional(map(string), {})
+    annotations = optional(map(string), {})
+  })
+  default  = {}
+  nullable = false
+}
+
 variable "job" {
   description = "Bootstrap job settings."
   type = object({

@@ -152,6 +152,56 @@ assert_bootstrap_inputs_applied() {
   fi
 }
 
+# assert_namespace_common_metadata verifies a namespace carries the expected
+# common metadata label and annotation. $1: namespace, $2: label key,
+# $3: label value, $4: annotation key, $5: annotation value.
+assert_namespace_common_metadata() {
+  ns="$1"
+  label_key="$2"
+  label_value="$3"
+  annotation_key="$4"
+  annotation_value="$5"
+
+  got_label="$(kubectl --context "kind-${cluster_name}" get namespace "${ns}" \
+    -o go-template="{{index .metadata.labels \"${label_key}\"}}" 2>/dev/null || true)"
+  if [ "${got_label}" != "${label_value}" ]; then
+    echo "Namespace ${ns} missing common label ${label_key}=${label_value}, got: '${got_label}'" >&2
+    exit 1
+  fi
+
+  got_annotation="$(kubectl --context "kind-${cluster_name}" get namespace "${ns}" \
+    -o go-template="{{index .metadata.annotations \"${annotation_key}\"}}" 2>/dev/null || true)"
+  if [ "${got_annotation}" != "${annotation_value}" ]; then
+    echo "Namespace ${ns} missing common annotation ${annotation_key}=${annotation_value}, got: '${got_annotation}'" >&2
+    exit 1
+  fi
+}
+
+# assert_job_common_metadata verifies the bootstrap Job carries the expected
+# common metadata label and annotation. $1: bootstrap namespace, $2: label key,
+# $3: label value, $4: annotation key, $5: annotation value.
+assert_job_common_metadata() {
+  ns="$1"
+  label_key="$2"
+  label_value="$3"
+  annotation_key="$4"
+  annotation_value="$5"
+
+  got_label="$(kubectl --context "kind-${cluster_name}" -n "${ns}" get job flux-operator-bootstrap \
+    -o go-template="{{index .metadata.labels \"${label_key}\"}}" 2>/dev/null || true)"
+  if [ "${got_label}" != "${label_value}" ]; then
+    echo "Bootstrap Job missing common label ${label_key}=${label_value}, got: '${got_label}'" >&2
+    exit 1
+  fi
+
+  got_annotation="$(kubectl --context "kind-${cluster_name}" -n "${ns}" get job flux-operator-bootstrap \
+    -o go-template="{{index .metadata.annotations \"${annotation_key}\"}}" 2>/dev/null || true)"
+  if [ "${got_annotation}" != "${annotation_value}" ]; then
+    echo "Bootstrap Job missing common annotation ${annotation_key}=${annotation_value}, got: '${got_annotation}'" >&2
+    exit 1
+  fi
+}
+
 dump_bootstrap_logs() {
   namespace="$1"
 
@@ -176,6 +226,7 @@ render_root_module() {
   prerequisite_charts="${10:-}"
   debug_on_failure="${11:-false}"
   job_env="${12:-}"
+  common_metadata="${13:-}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -346,6 +397,12 @@ cat <<ENVEOF
 ENVEOF
 fi)
   }
+$(if [ -n "${common_metadata}" ]; then
+cat <<CMEOF
+
+  common_metadata = ${common_metadata}
+CMEOF
+fi)
 
   timeout = "${timeout}"
 

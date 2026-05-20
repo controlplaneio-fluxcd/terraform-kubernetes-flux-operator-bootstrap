@@ -8,6 +8,10 @@ job:
   hostNetwork: false
   env: {}
 
+commonMetadata:
+  labels: {}
+  annotations: {}
+
 gitopsResources:
   instance: ""
   prerequisites:
