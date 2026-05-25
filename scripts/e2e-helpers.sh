@@ -10,7 +10,7 @@ image="${image_repository}:${image_tag}"
 inventory_config_map_name="inventory"
 
 # Versions of third-party charts used across e2e tests.
-e2e_podinfo_version="6.11.2"
+e2e_podinfo_version="6.12.0"
 e2e_cilium_version="1.19.4"
 e2e_spire_crds_version="0.5.0"
 e2e_spire_version="0.28.4"
