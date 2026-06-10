@@ -71,7 +71,7 @@ jobs:
         uses: fluxcd/flux2/action@1fd61a06264d71cf445ed55c4f14d401d26a1c64 # v2.8.8
 
       - name: Set up flux-operator CLI
-        uses: controlplaneio-fluxcd/flux-operator/actions/setup@5836c14559f39a466a7c413e55e0ee35480a0250 # v0.50.0
+        uses: controlplaneio-fluxcd/flux-operator/actions/setup@e957afa6dd422978f64f704f73000c740de309a2 # v0.51.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
