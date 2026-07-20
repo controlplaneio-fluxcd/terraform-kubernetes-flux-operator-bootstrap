@@ -11,7 +11,7 @@ inventory_config_map_name="inventory"
 
 # Versions of third-party charts used across e2e tests.
 e2e_podinfo_version="6.14.0"
-e2e_cilium_version="1.19.5"
+e2e_cilium_version="1.19.6"
 e2e_spire_crds_version="0.5.0"
 e2e_spire_version="0.29.0"
 
