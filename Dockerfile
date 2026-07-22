@@ -4,7 +4,7 @@ FROM mikefarah/yq:4@sha256:11a1f0b604b13dbbdc662260d8db6f644b22d8553122a25c1b5b2
 FROM alpine/helm:4.2.3@sha256:b97ba4f9b27fe7af16ee3d37e6815783c9d4a51289b6240a9024ec471611ae9b AS helm
 FROM registry.k8s.io/kubectl:v1.36.2@sha256:b0d792e0d8dfb9bb1b922b78b23137e2a34bb6f9667640353a9d2aadd1fd7761 AS kubectl
 
-FROM gcr.io/distroless/static-debian12:debug-nonroot@sha256:41561e021e6c81300ed6bf7a8763234e70a479c3fd619d6a7fc03923ef465d60
+FROM gcr.io/distroless/static-debian12:debug-nonroot@sha256:8c28702f8a20280cd84526f1abc50c6a91f933e5c3bf792e3e47fd1263146ed7
 
 COPY --from=flux-cli --chown=nonroot:nonroot /usr/local/bin/flux /usr/local/bin/flux
 COPY --from=flux-operator-cli --chown=nonroot:nonroot /usr/local/bin/flux-operator /usr/local/bin/flux-operator
