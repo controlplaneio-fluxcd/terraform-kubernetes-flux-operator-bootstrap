@@ -13,7 +13,7 @@ inventory_config_map_name="inventory"
 e2e_podinfo_version="6.15.0"
 e2e_cilium_version="1.20.1"
 e2e_spire_crds_version="0.6.1"
-e2e_spire_version="0.30.1"
+e2e_spire_version="0.30.2"
 
 _start_time="${EPOCHREALTIME/./}"
 _last_section_time="${_start_time}"
