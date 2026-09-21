@@ -16,9 +16,10 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 test_dir="$repo_root/test/offline-plan"
 
 plan_log="$(mktemp)"
+external_plan_log="$(mktemp)"
 
 cleanup() {
-  rm -f "$plan_log"
+  rm -f "$plan_log" "$external_plan_log"
   rm -rf "$test_dir/.terraform" "$test_dir/.terraform.lock.hcl" \
     "$test_dir/terraform.tfstate" "$test_dir/terraform.tfstate.backup"
 }
@@ -41,6 +42,23 @@ if ! grep -q "module.bootstrap.helm_release.this" "$plan_log"; then
 fi
 if ! grep -q "module.bootstrap.kubernetes_namespace_v1.this" "$plan_log"; then
   echo "FAIL: plan did not include the kubernetes_namespace_v1 resource" >&2
+  exit 1
+fi
+
+# With create_bootstrap_namespace = false the namespace must be absent while
+# the helm_release (which depends on it) is still planned.
+if ! terraform -chdir="$test_dir" plan -no-color -out=/dev/null \
+  -var=create_bootstrap_namespace=false > "$external_plan_log" 2>&1; then
+  cat "$external_plan_log"
+  echo "FAIL: terraform plan failed with create_bootstrap_namespace=false" >&2
+  exit 1
+fi
+if grep -q "module.bootstrap.kubernetes_namespace_v1.this" "$external_plan_log"; then
+  echo "FAIL: namespace planned despite create_bootstrap_namespace=false" >&2
+  exit 1
+fi
+if ! grep -q "module.bootstrap.helm_release.this" "$external_plan_log"; then
+  echo "FAIL: helm_release missing when create_bootstrap_namespace=false" >&2
   exit 1
 fi
 

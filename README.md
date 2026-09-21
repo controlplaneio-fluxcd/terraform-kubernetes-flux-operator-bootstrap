@@ -378,12 +378,12 @@ spec:
 ### Common metadata on created namespaces
 
 Use `common_metadata` to set labels and annotations on the bootstrap `Job` and
-on the namespaces the module creates — the bootstrap namespace, the
-`FluxInstance` target namespace, and any namespace created for a prerequisite
-chart with `create_namespace = true`. This is useful for landing namespaces in
-the right place (e.g. Rancher Projects), satisfying cloud-provider or admission
-policies, and avoiding drift-detection noise from labels expected on every
-namespace.
+on the namespaces the module creates — the bootstrap namespace (when
+`create_bootstrap_namespace = true`), the `FluxInstance` target namespace, and
+any namespace created for a prerequisite chart with `create_namespace = true`.
+This is useful for landing namespaces in the right place (e.g. Rancher
+Projects), satisfying cloud-provider or admission policies, and avoiding
+drift-detection noise from labels expected on every namespace.
 
 ```hcl
 module "flux_operator_bootstrap" {
@@ -406,7 +406,9 @@ specific namespace metadata reject namespaces created without it. They are then
 reconciled on every bootstrap run with server-side apply, so they stay in sync
 and drift is corrected without removing labels or annotations owned by others.
 Namespaces with `create_namespace = false` are owned by the user and are never
-touched.
+touched. The same applies to the bootstrap namespace when
+`create_bootstrap_namespace = false`: the module neither creates it nor applies
+`common_metadata` to it, so an external manager keeps ownership.
 
 Like the rest of the module, `common_metadata` follows the
 [Flux ownership and hand-off](#flux-ownership-and-hand-off) rule: it keeps a
@@ -440,6 +442,54 @@ spec:
     labels:
       app.kubernetes.io/managed-by: flux
 ```
+
+### Self-managed bootstrap namespace
+
+By default the module creates the bootstrap namespace and reconciles
+`common_metadata` on it. If another system owns that namespace, set
+`create_bootstrap_namespace = false` so Terraform stops managing it. This is the
+opt-out for controllers that add their own labels or annotations which the
+module would otherwise strip on every plan — for example Rancher, which stamps
+namespaces with `cattle.io/status` and
+`lifecycle.cattle.io/create.namespace-auth` and restores them immediately,
+causing perpetual drift.
+
+```hcl
+module "flux_operator_bootstrap" {
+  # ...
+  bootstrap_namespace        = "flux-operator-bootstrap"
+  create_bootstrap_namespace = false
+}
+```
+
+With the flag off the namespace must already exist before `terraform apply`
+(the module no longer creates it, and `common_metadata` is not applied to it),
+but the bootstrap `Job`, its `Secret`, and the `HelmRelease` are still created
+inside it as usual.
+
+> [!WARNING]
+> Turning this off on an instance that already manages the namespace makes
+> Terraform **destroy the namespace and everything inside it** (the running Flux
+> installation, secrets, and the bootstrap `Job`). Terraform sees the resource
+> leave the configuration and plans `1 to destroy`. A root-level
+> `removed { ... destroy = false }` block does **not** help here, because the
+> module still declares the resource (with `count = 0`), and Terraform rejects a
+> `removed` block for a resource that is still in configuration.
+>
+> To hand the namespace off to an external owner **without deleting it**, remove
+> it from state first and then set `create_bootstrap_namespace = false`:
+>
+> ```shell
+> # Use the address shown by `terraform state list`; after an upgrade that
+> # includes the count change it is `...kubernetes_namespace_v1.this[0]`,
+> # on older states it is `...kubernetes_namespace_v1.this`.
+> terraform state rm 'module.flux_operator_bootstrap.kubernetes_namespace_v1.this[0]'
+> ```
+>
+> After that, plan reports no changes for the namespace and the external owner
+> keeps full control. The same `terraform state rm` step applies if you
+> intentionally want Terraform to stop tracking a namespace you are about to
+> delete by other means.
 
 ### Operator values from a local file
 
@@ -638,7 +688,8 @@ other `data` source that returns a secret value.
   - `managed_resources.runtime_info.labels` (`Default: {}`): labels to set on the ConfigMap
   - `managed_resources.runtime_info.annotations` (`Default: {}`): annotations to set on the ConfigMap
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
-- `common_metadata` (`Default: {}`): labels and annotations applied to the bootstrap `Job` and to the namespaces the module creates — the bootstrap namespace, the `FluxInstance` target namespace, and any prerequisite chart namespace created with `create_namespace = true`. The metadata is written into each namespace **at creation time** (so admission policies that require it accept the namespace) and reconciled on later runs, until Flux adopts the namespace (kustomize-controller, helm-controller, `FluxInstance`, or `ResourceSet` ownership labels), after which the bootstrap hands off. Because the flux-operator owns the `FluxInstance` target namespace once Flux is installed, set that namespace's steady-state metadata via the `FluxInstance`'s `.spec.commonMetadata` to match
+- `create_bootstrap_namespace` (`Default: true`): when true, the module creates and manages the bootstrap namespace. Set to false to use a namespace managed outside the module (e.g. one with annotations added by another controller that the module would otherwise remove); the namespace must already exist
+- `common_metadata` (`Default: {}`): labels and annotations applied to the bootstrap `Job` and to the namespaces the module creates — the bootstrap namespace (when `create_bootstrap_namespace = true`), the `FluxInstance` target namespace, and any prerequisite chart namespace created with `create_namespace = true`. The metadata is written into each namespace **at creation time** (so admission policies that require it accept the namespace) and reconciled on later runs, until Flux adopts the namespace (kustomize-controller, helm-controller, `FluxInstance`, or `ResourceSet` ownership labels), after which the bootstrap hands off. Because the flux-operator owns the `FluxInstance` target namespace once Flux is installed, set that namespace's steady-state metadata via the `FluxInstance`'s `.spec.commonMetadata` to match
   - `common_metadata.labels` (`Default: {}`): labels to set on those resources
   - `common_metadata.annotations` (`Default: {}`): annotations to set on those resources
 - `job` (`Default: {}`): bootstrap job settings

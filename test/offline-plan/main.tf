@@ -33,11 +33,17 @@ provider "helm" {
   }
 }
 
+variable "create_bootstrap_namespace" {
+  type    = bool
+  default = true
+}
+
 module "bootstrap" {
   source = "../.."
 
-  bootstrap_namespace = "flux-operator-bootstrap"
-  revision            = 1
+  bootstrap_namespace        = "flux-operator-bootstrap"
+  create_bootstrap_namespace = var.create_bootstrap_namespace
+  revision                   = 1
 
   gitops_resources = {
     instance_yaml = <<-YAML
