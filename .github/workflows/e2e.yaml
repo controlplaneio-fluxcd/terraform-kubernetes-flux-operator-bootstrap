@@ -45,7 +45,7 @@ jobs:
           install_only: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Run end-to-end test (batch ${{ matrix.batch }})
         run: make docker-build e2e-batch-${{ matrix.batch }}
@@ -71,10 +71,10 @@ jobs:
         uses: fluxcd/flux2/action@dd233c4fadef306a62b7893204f8e3817fecc2b2 # v2.9.5
 
       - name: Set up flux-operator CLI
-        uses: controlplaneio-fluxcd/flux-operator/actions/setup@e0f71db839116724c84caf8e06ab8423e7d9b174 # v0.59.0
+        uses: controlplaneio-fluxcd/flux-operator/actions/setup@483d170eabe66118fa9959730396b634a9268717 # v0.60.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Run migration end-to-end test
         run: make docker-build e2e-migration
@@ -94,7 +94,7 @@ jobs:
           install_only: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Run critical components end-to-end test
         run: make docker-build e2e-critical-components
