@@ -61,8 +61,15 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
+variable "create_bootstrap_namespace" {
+  description = "When true, the module creates and manages the bootstrap namespace (including common_metadata). Set to false to use a namespace managed outside the module, for example one created by another system that adds annotations the module would otherwise remove on every plan. The namespace must already exist."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
 variable "common_metadata" {
-  description = "Labels and annotations applied to the bootstrap Job and to the namespaces the module creates: the bootstrap namespace, the FluxInstance target namespace, and any prerequisite chart namespace created with create_namespace = true. The metadata is written into each namespace at creation time (so admission policies that require it accept the namespace) and reconciled on later runs, until Flux adopts the namespace (kustomize-controller, helm-controller, FluxInstance, or ResourceSet ownership labels), after which the bootstrap hands off and stops modifying it. Because the flux-operator owns the FluxInstance target namespace once Flux is installed, set that namespace's steady-state metadata via the FluxInstance's .spec.commonMetadata to match."
+  description = "Labels and annotations applied to the bootstrap Job and to the namespaces the module creates: the bootstrap namespace (when create_bootstrap_namespace = true), the FluxInstance target namespace, and any prerequisite chart namespace created with create_namespace = true. The metadata is written into each namespace at creation time (so admission policies that require it accept the namespace) and reconciled on later runs, until Flux adopts the namespace (kustomize-controller, helm-controller, FluxInstance, or ResourceSet ownership labels), after which the bootstrap hands off and stops modifying it. Because the flux-operator owns the FluxInstance target namespace once Flux is installed, set that namespace's steady-state metadata via the FluxInstance's .spec.commonMetadata to match."
   type = object({
     labels      = optional(map(string), {})
     annotations = optional(map(string), {})

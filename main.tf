@@ -73,11 +73,25 @@ locals {
 }
 
 resource "kubernetes_namespace_v1" "this" {
+  count = var.create_bootstrap_namespace ? 1 : 0
+
   metadata {
     name        = var.bootstrap_namespace
     labels      = var.common_metadata.labels
     annotations = var.common_metadata.annotations
   }
+}
+
+# Preserve existing state when upgrading from the un-counted namespace resource.
+# Without this, adding count would make Terraform destroy and recreate the
+# namespace (and delete everything inside it).
+# TODO: Remove this moved block in a future major release, once every consumer
+# has applied a version that includes it and their state is at the [0] address.
+# Safe to keep indefinitely; only remove behind a documented major-version
+# boundary so version-skipping upgrades never hit a destroy/recreate.
+moved {
+  from = kubernetes_namespace_v1.this
+  to   = kubernetes_namespace_v1.this[0]
 }
 
 resource "kubernetes_secret_v1" "this" {
