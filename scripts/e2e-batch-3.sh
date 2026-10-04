@@ -27,6 +27,19 @@ prereq_charts="[{
       version    = \"${e2e_podinfo_version}\"
       namespace  = \"podinfo\"
       values_yaml = \"\"
+    }, {
+      name         = \"podinfo-rendered\"
+      repository   = \"ghcr.io/stefanprodan/charts/podinfo\"
+      version      = \"${e2e_podinfo_version}\"
+      namespace    = \"podinfo-rendered\"
+      install_mode = \"render\"
+      api_versions = [\"example.com/v1\"]
+      flux_adoption_check = {
+        resource  = \"deployment\"
+        api_group = \"apps\"
+        name      = \"podinfo-rendered\"
+        namespace = \"podinfo-rendered\"
+      }
     }]"
 # common_metadata is applied at creation time to the namespaces the module
 # creates (the FluxInstance target namespace and prerequisite chart namespaces
@@ -70,6 +83,15 @@ if [ "${podinfo_status}" != "deployed" ]; then
 fi
 note "Verifying podinfo deployment is running"
 kubectl --context "kind-${cluster_name}" -n podinfo rollout status deployment/podinfo --timeout=60s >/dev/null
+note "Verifying rendered podinfo resources are applied without creating a Helm release"
+kubectl --context "kind-${cluster_name}" -n podinfo-rendered rollout status \
+  deployment/podinfo-rendered --timeout=60s >/dev/null
+rendered_podinfo_status="$(helm --kube-context "kind-${cluster_name}" status podinfo-rendered \
+  -n podinfo-rendered -o json 2>/dev/null || true)"
+if [ -n "${rendered_podinfo_status}" ]; then
+  echo "Render-mode prerequisite chart unexpectedly created a Helm release" >&2
+  exit 1
+fi
 
 section "Common Metadata"
 note "Verifying common_metadata is applied to the bootstrap namespace (Terraform-owned)"
@@ -131,10 +153,27 @@ prereq_charts_with_adoption="[{
         name      = \"podinfo\"
         namespace = \"podinfo\"
       }
+    }, {
+      name         = \"podinfo-rendered\"
+      repository   = \"ghcr.io/stefanprodan/charts/podinfo\"
+      version      = \"${e2e_podinfo_version}\"
+      namespace    = \"podinfo-rendered\"
+      install_mode = \"render\"
+      api_versions = [\"example.com/v1\"]
+      flux_adoption_check = {
+        resource  = \"deployment\"
+        api_group = \"apps\"
+        name      = \"podinfo-rendered\"
+        namespace = \"podinfo-rendered\"
+      }
     }]"
 note "Simulating Flux adoption of the podinfo release (helm-controller label on the deployment)"
 kubectl --context "kind-${cluster_name}" -n podinfo label deployment podinfo \
   helm.toolkit.fluxcd.io/name=podinfo helm.toolkit.fluxcd.io/namespace=podinfo >/dev/null
+note "Simulating Flux adoption of the rendered chart deployment"
+kubectl --context "kind-${cluster_name}" -n podinfo-rendered label deployment podinfo-rendered \
+  kustomize.toolkit.fluxcd.io/name=podinfo \
+  kustomize.toolkit.fluxcd.io/namespace=flux-system >/dev/null
 note "Simulating Flux Operator ResourceSet adoption of the podinfo namespace (ownership label on the namespace)"
 kubectl --context "kind-${cluster_name}" label namespace podinfo \
   resourceset.fluxcd.controlplane.io/name=podinfo resourceset.fluxcd.controlplane.io/namespace=flux-system >/dev/null
@@ -147,6 +186,12 @@ bootstrap_log="$(kubectl --context "kind-${cluster_name}" -n flux-operator-boots
   logs job/flux-operator-bootstrap 2>/dev/null || true)"
 if ! printf '%s' "${bootstrap_log}" | grep -q "skip chart podinfo (adopted by Flux)"; then
   echo "Bootstrap did not skip adopted prerequisite chart" >&2
+  echo "Bootstrap log:" >&2
+  printf '%s\n' "${bootstrap_log}" >&2
+  exit 1
+fi
+if ! printf '%s' "${bootstrap_log}" | grep -q "skip chart podinfo-rendered (adopted by Flux)"; then
+  echo "Bootstrap did not skip the Flux-adopted rendered chart" >&2
   echo "Bootstrap log:" >&2
   printf '%s\n' "${bootstrap_log}" >&2
   exit 1

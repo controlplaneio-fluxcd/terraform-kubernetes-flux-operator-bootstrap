@@ -8,6 +8,8 @@ variable "gitops_resources" {
         name             = string
         repository       = string
         namespace        = string
+        install_mode     = optional(string, "helm_release")
+        api_versions     = optional(list(string), [])
         version          = optional(string)
         create_namespace = optional(bool, true)
         values_yaml      = optional(string, "")
@@ -36,6 +38,22 @@ variable "gitops_resources" {
       try(length(yamldecode(var.gitops_resources.instance_yaml).metadata.namespace) > 0, false)
     )
     error_message = "gitops_resources.instance_yaml must be a valid FluxInstance manifest with metadata.name and metadata.namespace."
+  }
+
+  validation {
+    condition = alltrue([
+      for chart in var.gitops_resources.prerequisites.charts :
+      contains(["helm_release", "render"], chart.install_mode)
+    ])
+    error_message = "Each prerequisite chart install_mode must be either \"helm_release\" or \"render\"."
+  }
+
+  validation {
+    condition = alltrue([
+      for chart in var.gitops_resources.prerequisites.charts :
+      chart.install_mode != "render" || chart.flux_adoption_check != null
+    ])
+    error_message = "Each prerequisite chart with install_mode = \"render\" must set flux_adoption_check."
   }
 }
 

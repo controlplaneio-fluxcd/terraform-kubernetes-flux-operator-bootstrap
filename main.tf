@@ -41,6 +41,8 @@ locals {
           repository      = chart.repository
           version         = chart.version != null ? chart.version : ""
           namespace       = chart.namespace
+          installMode     = chart.install_mode
+          apiVersions     = chart.api_versions
           createNamespace = chart.create_namespace
           values          = chart.values_yaml
           fluxAdoptionCheck = chart.flux_adoption_check != null ? {

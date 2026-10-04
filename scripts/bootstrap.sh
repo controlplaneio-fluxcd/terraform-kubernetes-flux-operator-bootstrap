@@ -712,11 +712,13 @@ helm_release_status() {
   helm status "$1" -n "$2" 2>/dev/null | awk '/^STATUS:/{print $2; exit}'
 }
 
-# install_or_upgrade_chart installs or upgrades a Helm chart from an OCI
-# repository. Uses --install so it works for both fresh installs and upgrades.
+# install_or_upgrade_chart installs, upgrades, or renders a Helm chart from an
+# OCI repository according to its install mode.
 # $1: release name, $2: OCI repository, $3: namespace, $4: version (optional),
-# $5: values file path (optional), $6: create namespace ("true"/"false", default "true").
-# Reads: bootstrap_timeout (for --wait/--timeout).
+# $5: values file path (optional), $6: create namespace ("true"/"false", default
+# "true"), $7: install mode (default "helm_release"), $8: API versions JSON array.
+# Reads: bootstrap_timeout (for --wait/--timeout), scratch_dir,
+#        ssa_field_manager.
 install_or_upgrade_chart() {
   chart_release_name="$1"
   chart_repository="$2"
@@ -724,6 +726,9 @@ install_or_upgrade_chart() {
   chart_version="${4:-}"
   chart_values_file="${5:-}"
   chart_create_ns="${6:-true}"
+  chart_install_mode="${7:-helm_release}"
+  chart_api_versions="${8:-[]}"
+
   # Pin to a specific chart version if provided.
   version_args=""
   if [ -n "${chart_version}" ]; then
@@ -739,13 +744,47 @@ install_or_upgrade_chart() {
   if [ "${chart_create_ns}" = "true" ]; then
     create_ns_args="--create-namespace"
   fi
-  helm upgrade --install "${chart_release_name}" "oci://${chart_repository}" \
-    --namespace="${chart_namespace}" \
-    ${create_ns_args} \
-    --wait=watcher \
-    --timeout="${bootstrap_timeout}" \
-    ${version_args} \
-    ${values_args}
+
+  case "${chart_install_mode}" in
+  "helm_release")
+    helm upgrade --install "${chart_release_name}" "oci://${chart_repository}" \
+      --namespace="${chart_namespace}" \
+      ${create_ns_args} \
+      --wait=watcher \
+      --timeout="${bootstrap_timeout}" \
+      ${version_args} \
+      ${values_args}
+    ;;
+  "render")
+    api_versions_args=""
+    chart_api_version_count="$(printf '%s' "${chart_api_versions}" | yq 'length')"
+    chart_api_version_index=0
+    while [ "${chart_api_version_index}" -lt "${chart_api_version_count}" ]; do
+      chart_api_version="$(printf '%s' "${chart_api_versions}" \
+        | yq -r ".[$chart_api_version_index]")"
+      api_versions_args="${api_versions_args} --api-versions=${chart_api_version}"
+      chart_api_version_index=$((chart_api_version_index + 1))
+    done
+
+    chart_rendered_file="${scratch_dir}/rendered-chart-${chart_release_name}.yaml"
+    # The charts are OCI artifacts; `helm template` renders templates/ resources,
+    # including CRDs stored there, without creating a Helm release.
+    helm template "${chart_release_name}" "oci://${chart_repository}" \
+      --namespace="${chart_namespace}" \
+      ${version_args} \
+      ${values_args} \
+      ${api_versions_args} > "${chart_rendered_file}"
+
+    log "+ apply rendered chart ${chart_release_name} (server-side)"
+    kubectl apply --server-side --force-conflicts \
+      --field-manager="${ssa_field_manager}" \
+      -f "${chart_rendered_file}" >/dev/null
+    ;;
+  *)
+    fail "Unsupported prerequisite chart install mode: ${chart_install_mode}"
+    return 1
+    ;;
+  esac
 }
 
 # install_or_upgrade_flux_operator installs or upgrades the flux-operator Helm
@@ -1069,6 +1108,8 @@ if [ -n "${prerequisite_charts_file}" ] && [ -f "${prerequisite_charts_file}" ];
     chart_repo="$(yq -r ".[$i].repository" "${prerequisite_charts_file}")"
     chart_version="$(yq -r ".[$i].version // \"\"" "${prerequisite_charts_file}")"
     chart_namespace="$(yq -r ".[$i].namespace" "${prerequisite_charts_file}")"
+    chart_install_mode="$(yq -r ".[$i].installMode // \"helm_release\"" "${prerequisite_charts_file}")"
+    chart_api_versions="$(yq -c ".[$i].apiVersions // []" "${prerequisite_charts_file}")"
     chart_create_namespace="$(yq -r ".[$i].createNamespace // true" "${prerequisite_charts_file}")"
 
     # When the module owns the chart's namespace (create_namespace=true), create
@@ -1098,7 +1139,19 @@ if [ -n "${prerequisite_charts_file}" ] && [ -f "${prerequisite_charts_file}" ];
     adopt_name="$(yq -r ".[$i].fluxAdoptionCheck.name // \"\"" "${prerequisite_charts_file}")"
     adopt_ns="$(yq -r ".[$i].fluxAdoptionCheck.namespace // \"\"" "${prerequisite_charts_file}")"
 
-    if [ -n "${adopt_resource}" ] && [ -n "${adopt_name}" ] && [ -n "${adopt_ns}" ]; then
+    if [ "${chart_install_mode}" = "render" ]; then
+      # Terraform validates that render-mode charts provide a marker resource
+      # for the existing chart-wide Flux adoption check.
+      if has_flux_ownership_label "${adopt_resource}" "${adopt_name}" "${adopt_ns}"; then
+        log "- skip chart ${chart_name} (adopted by Flux)"
+      else
+        log "Render and apply chart ${chart_name}"
+        install_or_upgrade_chart \
+          "${chart_name}" "${chart_repo}" "${chart_namespace}" \
+          "${chart_version}" "${values_file}" "${chart_create_namespace}" \
+          "${chart_install_mode}" "${chart_api_versions}"
+      fi
+    elif [ -n "${adopt_resource}" ] && [ -n "${adopt_name}" ] && [ -n "${adopt_ns}" ]; then
       # Adoption check available: use the same unlock/recover/upgrade flow as
       # the Flux Operator chart, gated behind the adoption check.
       if has_flux_ownership_label "${adopt_resource}" "${adopt_name}" "${adopt_ns}"; then

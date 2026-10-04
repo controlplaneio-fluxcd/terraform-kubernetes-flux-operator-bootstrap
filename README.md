@@ -40,7 +40,10 @@ The module creates a dedicated bootstrap namespace with a `Job` that:
   manifests) if configured; without `flux_adoption_check`, uses
   create-if-missing semantics; with `flux_adoption_check`, uses the full
   unlock/recover/upgrade flow (same as the Flux Operator chart) and skips
-  charts already adopted by Flux
+  charts already adopted by Flux; charts
+  with `install_mode = "render"` are rendered with `helm template` and applied
+  with server-side apply, and require `flux_adoption_check` to hand off the
+  whole chart once its marker resource is adopted
 - creates the `FluxInstance` target namespace if missing, with the
   [`common_metadata`](#common-metadata-on-created-namespaces) labels/annotations
   applied at creation time
@@ -93,8 +96,11 @@ subsequent runs so it never fights Flux's reconciliation. This hand-off applies
 across the module:
 
 - prerequisite manifests — re-applied only until adopted
-- prerequisite Helm charts — re-applied/upgraded only until adopted (when a
+- prerequisite Helm charts in `helm_release` mode (default) — re-applied/upgraded only until adopted (when a
   `flux_adoption_check` is configured)
+- prerequisite Helm charts in `render` mode — server-side applied until their configured
+  `flux_adoption_check` marker resource is adopted, then skipped as a whole;
+  these charts do not create Helm releases
 - the Flux Operator Helm release — upgraded only until adopted
 - the `FluxInstance` manifest — re-applied only until adopted
 - the namespaces stamped via [`common_metadata`](#common-metadata-on-created-namespaces)
@@ -112,7 +118,9 @@ label:
 
 The create-if-missing flows for prerequisite manifests, Helm charts, the Flux
 Operator release, and the `FluxInstance` check for the two Flux controller labels
-(`kustomize.toolkit.fluxcd.io/name` and `helm.toolkit.fluxcd.io/name`). Namespace
+(`kustomize.toolkit.fluxcd.io/name` and `helm.toolkit.fluxcd.io/name`). Rendered
+charts use the configured `flux_adoption_check` resource as a chart-wide marker
+for the same labels. Namespace
 metadata managed via `common_metadata` additionally recognizes the two Flux
 Operator labels, since a namespace can be owned by a `FluxInstance` or a
 `ResourceSet`.
@@ -673,10 +681,12 @@ other `data` source that returns a secret value.
   - `gitops_resources.prerequisites.charts[].name` (`Required`): Helm release name
   - `gitops_resources.prerequisites.charts[].repository` (`Required`): OCI Helm chart repository (without the `oci://` prefix)
   - `gitops_resources.prerequisites.charts[].namespace` (`Required`): namespace to install the chart into
+  - `gitops_resources.prerequisites.charts[].install_mode` (`Default: "helm_release"`): install as a regular Helm release (`"helm_release"`) or render and apply the chart resources directly (`"render"`); render mode is useful for CRD charts whose Helm release secret would exceed Kubernetes' size limit, does not create a Helm release, and requires `flux_adoption_check`
+  - `gitops_resources.prerequisites.charts[].api_versions` (`Default: []`): additional Kubernetes API versions to make available when rendering a chart; used only when `install_mode = "render"`
   - `gitops_resources.prerequisites.charts[].version` (`Optional`): Helm chart version constraint
   - `gitops_resources.prerequisites.charts[].create_namespace` (`Default: true`): create the namespace if it doesn't exist
   - `gitops_resources.prerequisites.charts[].values_yaml` (`Default: ""`): Helm chart values as a YAML string; may contain `${variable}` references substituted using `runtime_info` values
-  - `gitops_resources.prerequisites.charts[].flux_adoption_check` (`Optional`): when set, the bootstrap job checks the specified resource for Flux ownership labels before touching the release; if adopted, the chart is skipped entirely; if not adopted, the full unlock/recover/upgrade flow is used (like the Flux Operator chart); without this field, charts use create-if-missing semantics
+  - `gitops_resources.prerequisites.charts[].flux_adoption_check` (`Optional` for `helm_release`; required for `render`): when set, the bootstrap job checks the specified resource for Flux ownership labels before touching the release; if adopted, the chart is skipped entirely; if not adopted, the full unlock/recover/upgrade flow is used (like the Flux Operator chart); without this field, charts use create-if-missing semantics
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.resource` (`Required`): Kubernetes resource type to check (e.g. `deployment`)
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.api_group` (`Default: ""`): API group of the resource (e.g. `apps`); omit for core API resources
   - `gitops_resources.prerequisites.charts[].flux_adoption_check.name` (`Required`): resource name to check
