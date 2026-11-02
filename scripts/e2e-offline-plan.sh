@@ -17,9 +17,10 @@ test_dir="$repo_root/test/offline-plan"
 
 plan_log="$(mktemp)"
 external_plan_log="$(mktemp)"
+no_validation_plan_log="$(mktemp)"
 
 cleanup() {
-  rm -f "$plan_log" "$external_plan_log"
+  rm -f "$plan_log" "$external_plan_log" "$no_validation_plan_log"
   rm -rf "$test_dir/.terraform" "$test_dir/.terraform.lock.hcl" \
     "$test_dir/terraform.tfstate" "$test_dir/terraform.tfstate.backup"
 }
@@ -59,6 +60,23 @@ if grep -q "module.bootstrap.kubernetes_namespace_v1.this" "$external_plan_log";
 fi
 if ! grep -q "module.bootstrap.helm_release.this" "$external_plan_log"; then
   echo "FAIL: helm_release missing when create_bootstrap_namespace=false" >&2
+  exit 1
+fi
+
+# OpenAPI validation stays on by default, and disable_openapi_validation = true
+# reaches the helm_release.
+if ! grep -q "disable_openapi_validation *= false" "$plan_log"; then
+  echo "FAIL: helm_release does not validate against OpenAPI by default" >&2
+  exit 1
+fi
+if ! terraform -chdir="$test_dir" plan -no-color -out=/dev/null \
+  -var=disable_openapi_validation=true > "$no_validation_plan_log" 2>&1; then
+  cat "$no_validation_plan_log"
+  echo "FAIL: terraform plan failed with disable_openapi_validation=true" >&2
+  exit 1
+fi
+if ! grep -q "disable_openapi_validation *= true" "$no_validation_plan_log"; then
+  echo "FAIL: disable_openapi_validation=true did not reach the helm_release" >&2
   exit 1
 fi
 
