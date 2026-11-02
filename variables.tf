@@ -118,6 +118,13 @@ variable "timeout" {
   default     = "10m"
 }
 
+variable "disable_openapi_validation" {
+  description = "When true, Helm skips validating the bootstrap chart's rendered manifests against the cluster's OpenAPI schema. Validation downloads the whole schema with client-go's fixed 32s discovery timeout, which can fail on slow or high-latency links to the API server. The chart contains only the module's own bootstrap resources."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "debug_on_failure" {
   description = "When true, creates a terraform_data resource that polls the bootstrap Job and relays its logs via kubectl on failure so the failure cause surfaces in Terraform output. Requires kubectl to be available and configured (via KUBECONFIG or default kubeconfig) in the Terraform execution environment, with credentials for the target cluster. The relay only runs when the helm_release is being installed or upgraded — i.e. on inputs change or revision bump — and only prints when the bootstrap Job fails or never reaches a terminal state."
   type        = bool

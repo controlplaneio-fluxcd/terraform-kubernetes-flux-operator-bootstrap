@@ -126,6 +126,8 @@ resource "helm_release" "this" {
   timeout          = local.timeout_seconds
   max_history      = 5
 
+  disable_openapi_validation = var.disable_openapi_validation
+
   values = [local.helm_values_yaml]
 }
 

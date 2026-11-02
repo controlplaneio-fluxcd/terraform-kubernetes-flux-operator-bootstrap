@@ -38,11 +38,17 @@ variable "create_bootstrap_namespace" {
   default = true
 }
 
+variable "disable_openapi_validation" {
+  type    = bool
+  default = false
+}
+
 module "bootstrap" {
   source = "../.."
 
   bootstrap_namespace        = "flux-operator-bootstrap"
   create_bootstrap_namespace = var.create_bootstrap_namespace
+  disable_openapi_validation = var.disable_openapi_validation
   revision                   = 1
 
   gitops_resources = {
