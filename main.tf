@@ -23,10 +23,12 @@ locals {
         repository = var.job.image.repository
         pullPolicy = var.job.image.pull_policy
       }
-      affinity    = var.job.affinity
-      tolerations = var.job.tolerations
-      hostNetwork = var.job.host_network
-      env         = var.job.env
+      affinity           = var.job.affinity
+      tolerations        = var.job.tolerations
+      hostNetwork        = var.job.host_network
+      env                = var.job.env
+      podSecurityContext = var.job.pod_security_context
+      securityContext    = var.job.security_context
     }
     commonMetadata = {
       labels      = var.common_metadata.labels

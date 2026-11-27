@@ -698,6 +698,8 @@ other `data` source that returns a secret value.
   - `job.affinity` (`Default: linux node affinity`): pod affinity rules for the bootstrap job; defaults to scheduling on Linux nodes only (`kubernetes.io/os=linux`)
   - `job.tolerations` (`Default: []`): pod tolerations for the bootstrap job
   - `job.host_network` (`Default: false`): run the bootstrap job with host networking; required when the job must install a CNI plugin (e.g. Cilium) since pod networking is unavailable until the CNI is running
+  - `job.pod_security_context` (`Default:` non-root UID 65532, `RuntimeDefault` seccomp): pod-level securityContext for the bootstrap job; the default satisfies Pod Security Standards "restricted"
+  - `job.security_context` (`Default:` no privilege escalation, read-only root filesystem, all capabilities dropped): container-level securityContext for the bootstrap job; `/tmp` and `/home/nonroot` are writable emptyDir volumes
   - `job.env` (`Default: {}`): additional environment variables to pass to the bootstrap job container, for example to configure proxy settings.
 - `timeout` (`Default: "10m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 - `disable_openapi_validation` (`Default: false`): when true, Helm skips validating the bootstrap chart's rendered manifests against the cluster's OpenAPI schema. Validation downloads the whole schema with client-go's fixed 32s discovery timeout, which `timeout` doesn't extend, so on slow or high-latency links to the API server (e.g. through a VPN or a subnet router) the install can fail with `failed to download openapi ... context deadline exceeded`. The chart contains only the module's own bootstrap resources

@@ -101,6 +101,22 @@ variable "job" {
     tolerations  = optional(list(any), [])
     host_network = optional(bool, false)
     env          = optional(map(string), {})
+    pod_security_context = optional(any, {
+      runAsNonRoot = true
+      runAsUser    = 65532
+      runAsGroup   = 65532
+      fsGroup      = 65532
+      seccompProfile = {
+        type = "RuntimeDefault"
+      }
+    })
+    security_context = optional(any, {
+      allowPrivilegeEscalation = false
+      readOnlyRootFilesystem   = true
+      capabilities = {
+        drop = ["ALL"]
+      }
+    })
   })
   default  = {}
   nullable = false
