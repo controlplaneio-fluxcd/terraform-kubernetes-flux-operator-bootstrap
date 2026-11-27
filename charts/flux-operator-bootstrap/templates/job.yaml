@@ -24,6 +24,10 @@ spec:
       hostNetwork: true
       dnsPolicy: Default
 {{- end }}
+{{- with .Values.job.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
 {{- with .Values.job.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
@@ -36,6 +40,10 @@ spec:
       - name: bootstrap
         image: "{{ .Values.job.image.repository }}:{{ include "flux-operator-bootstrap.job-image-tag" . }}"
         imagePullPolicy: {{ .Values.job.image.pullPolicy }}
+{{- with .Values.job.securityContext }}
+        securityContext:
+          {{- toYaml . | nindent 10 }}
+{{- end }}
         env:
         - name: FLUX_INSTANCE_FILE
           value: /bootstrap/flux-instance.yaml
@@ -94,6 +102,12 @@ spec:
 {{- end }}
 {{- end }}
         volumeMounts:
+        # Writable scratch space for mktemp and the helm/kubectl caches under
+        # $HOME, so the root filesystem can stay read-only.
+        - name: tmp
+          mountPath: /tmp
+        - name: home
+          mountPath: /home/nonroot
         - name: bootstrap-manifest
           mountPath: /bootstrap
           readOnly: true
@@ -103,6 +117,10 @@ spec:
           readOnly: true
 {{- end }}
       volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: home
+        emptyDir: {}
       - name: bootstrap-manifest
         configMap:
           name: {{ .Release.Name }}
